@@ -67,10 +67,6 @@ class ComfyUIInstance:
                 elif response.status != 200:
                     raise Exception(f"Failed to connect to ComfyUI API: {response.status}")
 
-            ws_headers = {}
-            if self.auth and self.auth.api_key:
-                ws_headers['Authorization'] = f'Bearer {self.auth.api_key}'
-
             ws_kwargs = {
                 'origin': self.base_url,
             }
@@ -82,6 +78,7 @@ class ComfyUIInstance:
                 f"{self.ws_url}/ws?clientId={self.client_id}",
                 ping_interval=15,    # Отправлять ping каждые 20 секунд
                 ping_timeout=60,     # Ожидать ответ в течение 10 секунд
+                extra_headers={'Authorization': f'Bearer {self.auth.api_key}'} if self.auth and self.auth.api_key else None,
                 **ws_kwargs
             )
 
@@ -297,8 +294,8 @@ class ComfyUIClient:
 
                 session = await instance.get_session()
                 async with session.post(
-                        f"{instance.base_url}/prompt",
-                        json=prompt_data
+                    f"{instance.base_url}/prompt",
+                    json=prompt_data,
                 ) as response:
                     if response.status != 200:
                         error_text = await response.text()
@@ -345,7 +342,12 @@ class ComfyUIClient:
         percentage = int(100 * (value / max_value))
         return f"[{bar}] {percentage}%"
 
-    async def listen_for_updates(self, prompt_id: str, message_callback):
+    async def listen_for_updates(
+        self,
+        prompt_id: str,
+        message_callback,
+        cancel_event: Optional[asyncio.Event] = None,
+    ):
         """Listen for updates about a specific generation."""
 
         instance = self.prompt_to_instance.get(prompt_id)
@@ -361,8 +363,15 @@ class ComfyUIClient:
 
         try:
             while True:
+                if cancel_event and cancel_event.is_set():
+                    await emit("🛑 Generation cancelled by user.")
+                    await self.cancel_prompt(prompt_id)
+                    break
+
                 try:
-                    message = await instance.ws.recv()
+                    message = await asyncio.wait_for(instance.ws.recv(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    continue
                 except websockets.ConnectionClosed:
                     logger.error("WebSocket connection closed unexpectedly")
                     await emit("❌ Connection closed unexpectedly. Attempting to reconnect...")
@@ -484,3 +493,42 @@ class ComfyUIClient:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.close()
+
+    async def cancel_prompt(self, prompt_id: str) -> None:
+        """Attempt to cancel an in-flight prompt."""
+
+        instance = self.prompt_to_instance.get(prompt_id)
+        if not instance:
+            logger.debug("Cancel: prompt %s has no associated instance", prompt_id)
+            return
+
+        try:
+            if instance.ws and not instance.ws.closed:
+                try:
+                    await instance.ws.send(json.dumps({"type": "interrupt"}))
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug("Cancel interrupt failed: %s", exc)
+
+                try:
+                    await instance.ws.send(
+                        json.dumps({"type": "cancel", "data": {"prompt_id": prompt_id}})
+                    )
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug("Cancel command failed: %s", exc)
+
+            session = await instance.get_session()
+            try:
+                async with session.post(
+                    f"{instance.base_url}/queue",
+                    json={"action": "cancel", "prompt_id": prompt_id},
+                ) as response:
+                    if response.status not in {200, 204}:
+                        logger.debug(
+                            "Cancel HTTP call returned %s", response.status
+                        )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("Cancel HTTP call failed: %s", exc)
+
+        finally:
+            if prompt_id in instance.active_prompts:
+                instance.active_prompts.remove(prompt_id)
