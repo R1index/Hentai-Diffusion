@@ -11,19 +11,18 @@ import hashlib
 import hmac
 import json
 from pathlib import Path
-from typing import Optional, Dict, List, Set, Any
+from typing import Dict, List, Optional, Set
 from collections import defaultdict
 from discord.ext import commands, tasks
 from discord import app_commands
 
-# Assuming these imports exist in your project
 from logger import logger
-from .commands import rgen_command, reforge_command, upscale_command, workflows_command
+from .commands import rgen_command, workflows_command
 from ..comfy.workflow_manager import WorkflowManager
 from ..core.hook_manager import HookManager
 from ..core.generation_queue import GenerationQueue
 from ..comfy.client import ComfyUIClient
-from ..core.security import SecurityManager, BasicSecurity, SecurityResult
+from ..core.security import BasicSecurity, SecurityManager
 from ..core.plugin import Plugin
 
 
@@ -47,7 +46,8 @@ class ComfyUIBot(commands.Bot):
         self.workflow_manager = WorkflowManager(configuration_path)
         self.security_manager = SecurityManager()
         self.hook_manager = HookManager()
-        self.comfy_client = None
+        self.basic_security = BasicSecurity(self)
+        self.comfy_client: Optional[ComfyUIClient] = None
         self.generation_queue = GenerationQueue()
         
         # Plugin system
@@ -62,11 +62,13 @@ class ComfyUIBot(commands.Bot):
         self.SYNC_PREFIX: str = "SYNC "
         self._sync_seen: Dict[str, float] = {}
         self._sync_seen_ttl: float = 3600.0  # 1 hour
-  # Track when generation started
         
         # Donation system
         self.blocked_users: Set[str] = set()
         self.donor_users: Set[str] = set()
+        self.access_guild_id: Optional[str] = None
+        self.supporter_role_name: str = "Supporter"
+        self.supporter_role_id: Optional[str] = None
         self.user_generation_counts: Dict[str, int] = defaultdict(int)
         self.last_reset_time: float = time.time()
         
@@ -85,56 +87,56 @@ class ComfyUIBot(commands.Bot):
         return os.path.join('data', self.GENERATION_COUNTS_FILE)
 
     def _load_security_lists(self) -> None:
-        """Load blocked and donor users from configuration file"""
+        """Load blocked users, donors and supporter role configuration."""
+
         try:
-            with open(self.configuration_path, 'r') as f:
-                config = yaml.safe_load(f)
-                security = config.get('security', {})
-                
-                self.blocked_users = set(map(str, security.get('blocked_users', [])))
-                self.donor_users = set(map(str, security.get('donor_users', [])))
-                
-                logger.info(f"Loaded {len(self.blocked_users)} blocked users")
-                logger.info(f"Loaded {len(self.donor_users)} donor users")
-        except Exception as e:
-            logger.error(f"Failed to load security lists: {e}")
+            config_data = None
+            for encoding in ("utf-8", "utf-8-sig", "cp1251"):
+                try:
+                    with open(self.configuration_path, "r", encoding=encoding) as file:
+                        config_data = yaml.safe_load(file) or {}
+                    break
+                except UnicodeDecodeError:
+                    continue
+
+            if config_data is None:
+                raise UnicodeDecodeError("auto", b"", 0, 1, "Unable to decode config in known encodings")
+
+            security = config_data.get("security", {}) or {}
+
+            self.blocked_users = {str(user) for user in security.get("blocked_users", [])}
+            self.donor_users = {str(user) for user in security.get("donor_users", [])}
+
+            access_guild_id = security.get("access_guild_id")
+            self.access_guild_id = str(access_guild_id) if access_guild_id else None
+            self.supporter_role_name = security.get("supporter_role_name", "Supporter")
+
+            supporter_role_id = security.get("supporter_role_id")
+            self.supporter_role_id = str(supporter_role_id) if supporter_role_id else None
+
+            logger.info(
+                "Loaded security configuration: %d blocked users, %d donors",
+                len(self.blocked_users),
+                len(self.donor_users),
+            )
+
+            if self.access_guild_id:
+                role_descriptor = self.supporter_role_id or self.supporter_role_name
+                logger.info(
+                    "Supporter role checks enabled for guild %s (role %s)",
+                    self.access_guild_id,
+                    role_descriptor,
+                )
+            else:
+                logger.warning("Supporter role checks disabled: access_guild_id is not configured")
+
+        except Exception as exc:
+            logger.error(f"Failed to load security configuration: {exc}")
             self.blocked_users = set()
             self.donor_users = set()
-
-    def _load_security_lists(self) -> None:
-            """Load blocked users and access settings from configuration file"""
-            try:
-                # Try UTF-8 first; fall back to UTF-8 with BOM, then cp1251 as last resort
-                for enc in ("utf-8", "utf-8-sig", "cp1251"):
-                    try:
-                        with open(self.configuration_path, 'r', encoding=enc) as f:
-                            config = yaml.safe_load(f) or {}
-                        break
-                    except UnicodeDecodeError:
-                        continue
-                else:
-                    raise UnicodeDecodeError("auto", b"", 0, 1, "Unable to decode config in known encodings")
-
-                security = config.get('security', {}) or {}
-
-                self.blocked_users = set(map(str, security.get('blocked_users', [])))
-                # Role-based unlimited access settings
-                self.access_guild_id = security.get('access_guild_id')
-                self.supporter_role_name = security.get('supporter_role_name', 'Supporter')
-                self.supporter_role_id = security.get('supporter_role_id')
-
-                logger.info(f"Loaded {len(self.blocked_users)} blocked users")
-                if self.access_guild_id:
-                    extra = f", role_id: {self.supporter_role_id}" if self.supporter_role_id else ""
-                    logger.info(f"Access guild: {self.access_guild_id}, role: {self.supporter_role_name}{extra}")
-                else:
-                    logger.warning("No access_guild_id set; Supporter role checks disabled")
-            except Exception as e:
-                logger.error(f"Failed to load security lists: {e}")
-                self.blocked_users = set()
-                self.access_guild_id = None
-                self.supporter_role_name = "Supporter"
-                self.supporter_role_id = None
+            self.access_guild_id = None
+            self.supporter_role_name = "Supporter"
+            self.supporter_role_id = None
 
     def _load_generation_counts(self) -> None:
         """Load generation counts from file"""
@@ -250,8 +252,7 @@ class ComfyUIBot(commands.Bot):
         logger.info("Registering commands...")
         try:
             self.tree.add_command(rgen_command(self))
-            #self.tree.add_command(reforge_command(self))
-            #self.tree.add_command(upscale_command(self))
+            self.tree.add_command(workflows_command(self))
             self.tree.add_command(self._create_limits_command())
 
             commands = await self.tree.sync()
@@ -575,82 +576,79 @@ class ComfyUIBot(commands.Bot):
         return limits_command
 
     async def handle_generation(
-            self,
-            interaction: discord.Interaction,
-            workflow_type: str,
-            prompt: str,
-            workflow: Optional[str] = None,
-            settings: Optional[str] = None,
-            input_image: Optional[discord.Attachment] = None
-        ) -> None:
-            """Handle image generation requests with limits"""
-            user_id = str(interaction.user.id)            
-            privileged_users = [
-            ]            
-            
-            try:
-                # Reset counts if 24 hours have passed
-                self._reset_counts_if_needed()
+        self,
+        interaction: discord.Interaction,
+        workflow_type: str,
+        prompt: str,
+        workflow: Optional[str] = None,
+        settings: Optional[str] = None,
+        input_image: Optional[discord.Attachment] = None,
+    ) -> None:
+        """Handle image generation requests while enforcing per-user limits."""
 
-                # Check if user is blocked
-                if user_id in self.blocked_users:
-                    await self._send_blocked_message(interaction)
+        user_id = str(interaction.user.id)
+
+        try:
+            self._reset_counts_if_needed()
+
+            if user_id in self.blocked_users:
+                await self._send_blocked_message(interaction)
+                return
+
+            if self.active_generations.get(user_id):
+                await self._send_active_generation_message(interaction)
+                return
+
+            logger.info(
+                "Handling generation request: workflow_type=%s, workflow=%s", workflow_type, workflow
+            )
+
+            is_supporter = await self._has_unlimited_access(interaction)
+            is_donor = is_supporter or user_id in self.donor_users
+
+            if not is_donor:
+                logger.info("User %s is subject to limits", user_id)
+                if self.user_generation_counts[user_id] >= 50:
+                    await self._send_limit_reached_message(interaction)
                     return
-                    
-                # Проверяем, находится ли пользователь в списке привилегированных
-                if user_id not in privileged_users:
-                    # Check for active generation
-                    if self.active_generations.get(user_id, False):
-                        await self._send_active_generation_message(interaction)
-                        return
 
-                # Debug: log workflow and workflow_type for analysis
-                logger.info(f"Handling generation request: workflow_type = {workflow_type}, workflow = {workflow}")
+                self.user_generation_counts[user_id] += 1
+                self._save_generation_counts()
 
-                # ✅ Проверка роли Supporter должна быть на этом же уровне отступа, внутри try
-                is_supporter = await self._has_unlimited_access(interaction)
-                is_donor = is_supporter
-
-                if not is_supporter:
-                    logger.info(f"User {user_id} is regular, checking generation limits...")
-                    if self.user_generation_counts[user_id] >= 50:
-                        await self._send_limit_reached_message(interaction)
-                        return
-                    
-                    self.user_generation_counts[user_id] += 1
-                    self._save_generation_counts()
-
-                    # publish sync event to other bots
-                    try:
-                        asyncio.create_task(self._publish_limit_update(
+                try:
+                    asyncio.create_task(
+                        self._publish_limit_update(
                             user_id=int(user_id),
                             used=int(self.user_generation_counts[user_id]),
                             limit=50,
                             reset_at=float(self.last_reset_time + 86400.0),
-                        ))
-                    except Exception as _e:
-                        logger.debug(f"SYNC publish skipped: {_e}")
+                        )
+                    )
+                except Exception as exc:
+                    logger.debug(f"SYNC publish skipped: {exc}")
 
-                # Mark user as having active generation
-                self.active_generations[user_id] = True
-                self.generation_start_times[user_id] = time.time()
+            self.active_generations[user_id] = True
+            self.generation_start_times[user_id] = time.time()
 
-                logger.info(
-                    f"Generation started by {interaction.user} (Donor: {is_supporter}, "
-                    f"Count: {self.user_generation_counts[user_id]}, Workflow: {workflow or 'default'}"
-                )
+            logger.info(
+                "Generation started by %s (Unlimited: %s, Count: %s, Workflow: %s)",
+                interaction.user,
+                is_donor,
+                self.user_generation_counts[user_id],
+                workflow or "default",
+            )
 
-                await self._process_generation(
-                    interaction, workflow_type, prompt, workflow, settings, input_image, is_supporter
-                )
+            await self._process_generation(
+                interaction, workflow_type, prompt, workflow, settings, input_image, is_donor
+            )
 
-            except Exception as e:
-                self.active_generations.pop(user_id, None)
-                self.generation_start_times.pop(user_id, None)
-                if not interaction.response.is_done():
-                    await self._send_error_message(interaction, str(e))
-                logger.error(f"Generation error: {e}")
-                raise
+        except Exception as exc:
+            self.active_generations.pop(user_id, None)
+            self.generation_start_times.pop(user_id, None)
+            if not interaction.response.is_done():
+                await self._send_error_message(interaction, str(exc))
+            logger.error(f"Generation error: {exc}", exc_info=True)
+            raise
 
     async def _send_blocked_message(self, interaction: discord.Interaction) -> None:
         """Send message to blocked users"""

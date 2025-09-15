@@ -1,22 +1,20 @@
-import io
-import ssl
-import urllib
-import json
-from datetime import datetime, timedelta
-
-import discord
-from typing import List, Optional, Dict
-import aiohttp
-import websockets
-import uuid
 import asyncio
-import urllib.parse
 import base64
-from enum import Enum
+import io
+import json
 import random
+import ssl
 import time
+import urllib.parse
+import uuid
+from datetime import datetime, timedelta
 from dataclasses import dataclass
-from pathlib import Path
+from enum import Enum
+from typing import Dict, List, Optional
+
+import aiohttp
+import discord
+import websockets
 
 from logger import logger
 
@@ -90,10 +88,11 @@ class ComfyUIInstance:
             self.connected = True
             logger.info(f"Connected to ComfyUI instance at {self.base_url}")
 
-        except Exception as e:
+        except Exception as exc:
             self.connected = False
             await self.cleanup()
-            raise logger.error(f"Failed to connect to ComfyUI instance {self.base_url}: {e}")
+            logger.error(f"Failed to connect to ComfyUI instance {self.base_url}: {exc}")
+            raise
 
     async def mark_used(self):
         """Mark the instance as recently used"""
@@ -179,6 +178,15 @@ class ComfyUIClient:
         if not self.instances:
             raise ValueError("No ComfyUI instances configured")
 
+    async def _fire_hook(self, hook_name: str, *args) -> None:
+        """Execute a hook if a hook manager is configured."""
+
+        if self.hook_manager:
+            try:
+                await self.hook_manager.execute_hook(hook_name, *args)
+            except Exception as exc:  # pragma: no cover - defensive logging
+                logger.error(f"Hook '{hook_name}' execution failed: {exc}")
+
     async def connect(self):
         """Connect to all ComfyUI instances"""
         connect_tasks = [instance.initialize() for instance in self.instances]
@@ -201,9 +209,7 @@ class ComfyUIClient:
                     if instance.connected and instance.is_timed_out() and not instance.active_prompts:
                         logger.info(f"Instance {instance.base_url} timed out, cleaning up...")
                         await instance.cleanup()
-                        if self.hook_manager:
-                            await self.hook_manager.execute_hook('is.comfyui.client.instance.timeout',
-                                                                 instance.base_url)
+                        await self._fire_hook('is.comfyui.client.instance.timeout', instance.base_url)
             except Exception as e:
                 logger.error(f"Error in timeout checker: {e}")
 
@@ -222,32 +228,26 @@ class ComfyUIClient:
             cleanup_tasks = [instance.cleanup() for instance in self.instances]
             await asyncio.gather(*cleanup_tasks, return_exceptions=True)
 
-    def _select_instance_round_robin(self) -> ComfyUIInstance:
-        connected_instances = [i for i in self.instances if i.connected]
-
-        if not connected_instances:
+    def _select_instance_round_robin(self, instances: List[ComfyUIInstance]) -> ComfyUIInstance:
+        if not instances:
             raise Exception("No connected instances available")
 
-        instance = connected_instances[self.current_instance_index % len(connected_instances)]
-        self.current_instance_index += 1
+        instance = instances[self.current_instance_index % len(instances)]
+        self.current_instance_index = (self.current_instance_index + 1) % len(instances)
         return instance
 
-    def _select_instance_random(self) -> ComfyUIInstance:
-        connected_instances = [i for i in self.instances if i.connected]
-        if not connected_instances:
+    def _select_instance_random(self, instances: List[ComfyUIInstance]) -> ComfyUIInstance:
+        if not instances:
             raise Exception("No connected instances available")
 
-        weights = [instance.weight for instance in connected_instances]
-        return random.choices(connected_instances, weights=weights, k=1)[0]
+        weights = [instance.weight for instance in instances]
+        return random.choices(instances, weights=weights, k=1)[0]
 
-    def _select_instance_least_busy(self) -> ComfyUIInstance:
-        connected_instances = [i for i in self.instances if i.connected]
-
-        if not connected_instances:
+    def _select_instance_least_busy(self, instances: List[ComfyUIInstance]) -> ComfyUIInstance:
+        if not instances:
             raise Exception("No connected instances available")
 
-        return min(connected_instances,
-                   key=lambda i: i.active_generations / i.weight)
+        return min(instances, key=lambda inst: inst.active_generations / max(inst.weight, 1))
 
     async def _get_instance(self) -> ComfyUIInstance:
         instance = await self._select_instance()
@@ -258,25 +258,30 @@ class ComfyUIClient:
         strategies = {
             LoadBalanceStrategy.ROUND_ROBIN: self._select_instance_round_robin,
             LoadBalanceStrategy.RANDOM: self._select_instance_random,
-            LoadBalanceStrategy.LEAST_BUSY: self._select_instance_least_busy
+            LoadBalanceStrategy.LEAST_BUSY: self._select_instance_least_busy,
         }
 
         # Filter out disconnected or timed out instances
-        available_instances = [i for i in self.instances if i.connected and not i.is_timed_out()]
+        available_instances = [
+            instance for instance in self.instances if instance.connected and not instance.is_timed_out()
+        ]
 
         if not available_instances:
             for instance in self.instances:
                 if not instance.connected and not instance.active_prompts:
                     logger.info(f"Attempting to reconnect to instance {instance.base_url}")
-                    await self.hook_manager.execute_hook('is.comfyui.client.instance.reconnect', instance.base_url)
-                    await instance.initialize()
+                    await self._fire_hook('is.comfyui.client.instance.reconnect', instance.base_url)
+                    try:
+                        await instance.initialize()
+                    except Exception as exc:
+                        logger.error(f"Reconnection to {instance.base_url} failed: {exc}")
 
-            available_instances = [i for i in self.instances if i.connected]
+            available_instances = [instance for instance in self.instances if instance.connected]
             if not available_instances:
                 raise Exception("No available instances")
 
-        self.instances = available_instances
-        return strategies[self.strategy]()
+        strategy_fn = strategies.get(self.strategy, self._select_instance_least_busy)
+        return strategy_fn(available_instances)
 
     async def generate(self, workflow: dict) -> dict:
         instance = await self._get_instance()
@@ -310,18 +315,6 @@ class ComfyUIClient:
             finally:
                 instance.active_generations -= 1
 
-    async def _test_image_access(self, url: str) -> bool:
-        """Test if an image URL is accessible"""
-        if self.session is None:
-            return False
-
-        try:
-            async with self.session.get(url) as response:
-                return response.status == 200
-        except Exception as e:
-            logger.error(f"Error testing image access: {e}")
-            return False
-
     def _get_image_url(self, instance: ComfyUIInstance, image_data: dict) -> str:
         """Construct the image URL for a specific instance"""
         try:
@@ -353,38 +346,34 @@ class ComfyUIClient:
         return f"[{bar}] {percentage}%"
 
     async def listen_for_updates(self, prompt_id: str, message_callback):
-        """Listen for updates about a specific generation"""
-        # Find instance handling this prompt
+        """Listen for updates about a specific generation."""
+
         instance = self.prompt_to_instance.get(prompt_id)
-        if not instance or not instance.connected:
+        if not instance or not instance.connected or not instance.ws:
             raise Exception(f"No connected instance found for prompt {prompt_id}")
 
-        current_image_data = None
-        current_image_filename = None
-        generation_complete = False
-        node_progress = {}
-
-    async def listen_for_updates(self, prompt_id: str, message_callback):
-        """Listen for updates about a specific generation"""
-        # Find instance handling this prompt
-        instance = self.prompt_to_instance.get(prompt_id)
-        if not instance or not instance.connected:
-            raise Exception(f"No connected instance found for prompt {prompt_id}")
-
-        current_image_data = None
-        current_image_filename = None
-        generation_complete = False
-        node_progress = {}
-        
-        # Время начала генерации
+        node_progress: Dict[str, Dict[str, float]] = {}
         start_time = time.time()
+        session = await instance.get_session()
 
-        while not generation_complete:
-            try:
-                message = await instance.ws.recv()
+        async def emit(status: str, image_file: Optional[discord.File] = None) -> None:
+            await message_callback(status, image_file)
+
+        try:
+            while True:
+                try:
+                    message = await instance.ws.recv()
+                except websockets.ConnectionClosed:
+                    logger.error("WebSocket connection closed unexpectedly")
+                    await emit("❌ Connection closed unexpectedly. Attempting to reconnect...")
+                    await self._reconnect_instance(instance)
+                    session = await instance.get_session()
+                    continue
+
                 try:
                     data = json.loads(message)
-                except (json.JSONDecodeError, UnicodeDecodeError):
+                except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                    logger.debug(f"Skipping invalid WebSocket payload: {exc}")
                     continue
 
                 msg_type = data.get('type')
@@ -396,20 +385,21 @@ class ComfyUIClient:
                 if msg_type == 'progress':
                     node = msg_data.get('node')
                     value = msg_data.get('value', 0)
-                    max_value = msg_data.get('max', 100)
+                    max_value = msg_data.get('max', 100) or 100
 
-                    progress_percentage = (value / max_value) * 100
-                    milestones = [25, 50, 75, 100]
+                    if not node:
+                        continue
 
-                    if node_progress.get(node, {}).get('last_milestone') == 100 and progress_percentage < 100:
-                        node_progress[node] = {'last_milestone': 0}
+                    progress_percentage = (value / max_value) * 100 if max_value else 0
+                    last_milestone = node_progress.get(node, {}).get('last_milestone', 0)
+                    milestones = (25, 50, 75, 100)
 
                     for milestone in milestones:
-                        if progress_percentage >= milestone > node_progress.get(node, {}).get('last_milestone', 0):
+                        if progress_percentage >= milestone > last_milestone:
                             node_progress[node] = {
                                 'value': value,
                                 'max': max_value,
-                                'last_milestone': milestone
+                                'last_milestone': milestone,
                             }
                             progress_bar = self._create_progress_bar(value, max_value)
                             elapsed_time = time.time() - start_time
@@ -418,91 +408,63 @@ class ComfyUIClient:
                                 f"{progress_bar}\n"
                                 f"⏱ Time elapsed: {elapsed_time:.2f} seconds"
                             )
-                            await message_callback(status, None)
+                            await emit(status)
+                            break
 
                 elif msg_type == 'executing':
                     node_id = msg_data.get('node')
                     if node_id:
                         node_progress.pop(node_id, None)
                         elapsed_time = time.time() - start_time
-                        await message_callback(
-                            f"🔄 Processing node {node_id}...\n⏱ Time elapsed: {elapsed_time:.2f} seconds", None
+                        await emit(
+                            f"🔄 Processing node {node_id}...\n⏱ Time elapsed: {elapsed_time:.2f} seconds"
                         )
                     else:
-                        generation_complete = True
+                        await emit("✅ Generation completed")
+                        break
 
                 elif msg_type == 'executed':
                     node_output = msg_data.get('output')
-                    if isinstance(node_output, dict) and 'images' in node_output:
-                        for image_data in node_output['images']:
-                            if isinstance(image_data, dict) and 'filename' in image_data:
-                                image_url = self._get_image_url(instance, image_data)
-                                if image_url:
-                                    async with instance.session.get(image_url) as response:
-                                        if response.status == 200:
-                                            current_image_data = await response.read()
-                                            current_image_filename = image_data['filename']
+                    if not isinstance(node_output, dict):
+                        continue
 
-                                            image_file = discord.File(
-                                                io.BytesIO(current_image_data),
-                                                filename=current_image_filename,
-                                            )
-                                            elapsed_time = time.time() - start_time
-                                            await message_callback(
-                                                f"🖼 New image generated!\n⏱ Time elapsed: {elapsed_time:.2f} seconds",
-                                                image_file
-        )
-                elif msg_type == 'executed':
-                    node_output = msg_data.get('output')
-                    if node_output and isinstance(node_output, dict) and 'images' in node_output:
-                        for image_data in node_output['images']:
-                            if isinstance(image_data, dict) and 'filename' in image_data:
-                                image_url = self._get_image_url(instance, image_data)
-                                if image_url:
-                                    async with instance.session.get(image_url) as response:
-                                        if response.status == 200:
-                                            current_image_data = await response.read()
-                                            current_image_filename = image_data.get('filename')
+                    for image_data in node_output.get('images', []):
+                        if not isinstance(image_data, dict) or 'filename' not in image_data:
+                            continue
 
-                                            image_file = discord.File(
-                                                io.BytesIO(current_image_data),
-                                                filename=current_image_filename,
-                                            )
-                                            elapsed_time = time.time() - start_time
-                                            await message_callback(
-                                                f"🖼 New image generated!\n⏱ Time elapsed: {elapsed_time:.2f} seconds", 
-                                                image_file
-                                            )
+                        image_url = self._get_image_url(instance, image_data)
+                        if not image_url:
+                            continue
+
+                        async with session.get(image_url) as response:
+                            if response.status != 200:
+                                continue
+
+                            image_bytes = await response.read()
+                            image_file = discord.File(
+                                io.BytesIO(image_bytes),
+                                filename=image_data.get('filename', 'output.png'),
+                            )
+                            elapsed_time = time.time() - start_time
+                            await emit(
+                                f"🖼 New image generated!\n⏱ Time elapsed: {elapsed_time:.2f} seconds",
+                                image_file,
+                            )
 
                 elif msg_type == 'error':
                     error_msg = msg_data.get('error', 'Unknown error')
-                    if prompt_id in instance.active_prompts:
-                        instance.active_prompts.remove(prompt_id)
-                    if prompt_id in self.prompt_to_instance:
-                        del self.prompt_to_instance[prompt_id]
-
                     logger.error(f"ComfyUI Error: {error_msg}")
-                    await message_callback(f"❌ Error: ComfyUI Error, check logs for more information.")
+                    await emit("❌ Error: ComfyUI Error, check logs for more information.")
                     raise Exception(f"ComfyUI Error: {error_msg}")
 
-            except websockets.ConnectionClosed:
-                logger.error("WebSocket connection closed unexpectedly")
-                await message_callback("❌ Connection closed unexpectedly. Attempting to reconnect...")
-                await self._reconnect_instance(instance)  # Попытаться переподключить
-
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse WebSocket message: {e}")
-                continue
-            except Exception as e:
-                logger.error(f"Error while listening for updates: {str(e)}")
-                await message_callback(f"❌ Error: {str(e)}")
-                raise
-
-        # Очистка после завершения работы
-        if prompt_id in instance.active_prompts:
-            instance.active_prompts.remove(prompt_id)
-        if prompt_id in self.prompt_to_instance:
-            del self.prompt_to_instance[prompt_id]
+        except Exception as exc:
+            logger.error(f"Error while listening for updates: {exc}")
+            await emit(f"❌ Error: {exc}")
+            raise
+        finally:
+            if prompt_id in instance.active_prompts:
+                instance.active_prompts.remove(prompt_id)
+            self.prompt_to_instance.pop(prompt_id, None)
 
 
     async def _reconnect_instance(self, instance: ComfyUIInstance):
@@ -512,9 +474,9 @@ class ComfyUIClient:
             await instance.cleanup()  # Закрываем старое соединение
             await instance.initialize()  # Инициализируем новое соединение
             logger.info(f"Reconnected to {instance.base_url}")
-        except Exception as e:
-            logger.error(f"Failed to reconnect to {instance.base_url}: {e}")
-            await self._reconnect_instance(instance)  # Повторяем попытку, если не удалось подключиться
+        except Exception as exc:
+            logger.error(f"Failed to reconnect to {instance.base_url}: {exc}")
+            raise
 
     async def __aenter__(self):
         await self.connect()
