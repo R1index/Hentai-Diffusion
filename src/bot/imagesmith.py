@@ -51,6 +51,7 @@ class GenerationContext:
     completed: bool = False
     cancelled_notified: bool = False
     finalized: bool = False
+    last_attachment_filename: Optional[str] = None
 
 
 class ComfyUIBot(commands.Bot):
@@ -815,14 +816,38 @@ class ComfyUIBot(commands.Bot):
             extra_fields=extra_fields,
         )
 
+        attachments: List[discord.Attachment | discord.File] = []
+        if image_file:
+            if hasattr(image_file, "fp") and hasattr(image_file.fp, "seek"):
+                try:
+                    image_file.fp.seek(0)
+                except Exception:  # pragma: no cover - defensive
+                    pass
+            embed.set_image(url=f"attachment://{image_file.filename}")
+            attachments = [image_file]
+        elif context.message.attachments:
+            attachments = list(context.message.attachments)
+            filename = context.last_attachment_filename or attachments[0].filename
+            if filename:
+                embed.set_image(url=f"attachment://{filename}")
+        else:
+            context.last_attachment_filename = None
+
         kwargs = {"embed": embed}
         if context.view:
             kwargs["view"] = context.view
-        if image_file:
-            kwargs["attachments"] = [image_file]
+        if image_file or attachments:
+            kwargs["attachments"] = attachments
 
         try:
-            await context.message.edit(**kwargs)
+            new_message = await context.message.edit(**kwargs)
+            context.message = new_message
+            if new_message.attachments:
+                context.last_attachment_filename = new_message.attachments[0].filename
+            elif image_file:
+                context.last_attachment_filename = image_file.filename
+            else:
+                context.last_attachment_filename = None
         except discord.HTTPException as exc:  # pragma: no cover - defensive
             logger.debug("Failed to update message for %s: %s", context.user_id, exc)
 
