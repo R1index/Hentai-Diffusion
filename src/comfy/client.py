@@ -494,8 +494,12 @@ class ComfyUIClient:
                     ):
                         continue
 
+                    image_payload = msg_data.get("data")
+                    if not isinstance(image_payload, dict):
+                        image_payload = msg_data
+
                     files = await build_image_files(
-                        msg_data,
+                        image_payload,
                         default_name=f"preview-{prompt_id}-{node_id}",
                     )
                     if not files:
