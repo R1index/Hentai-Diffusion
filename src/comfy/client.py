@@ -504,31 +504,36 @@ class ComfyUIClient:
 
         try:
             if instance.ws and not instance.ws.closed:
-                try:
-                    await instance.ws.send(json.dumps({"type": "interrupt"}))
-                except Exception as exc:  # pragma: no cover - defensive
-                    logger.debug("Cancel interrupt failed: %s", exc)
-
-                try:
-                    await instance.ws.send(
-                        json.dumps({"type": "cancel", "data": {"prompt_id": prompt_id}})
-                    )
-                except Exception as exc:  # pragma: no cover - defensive
-                    logger.debug("Cancel command failed: %s", exc)
+                for payload in (
+                    {"type": "interrupt"},
+                    {"type": "cancel", "data": {"prompt_id": prompt_id}},
+                ):
+                    try:
+                        await instance.ws.send(json.dumps(payload))
+                    except Exception as exc:  # pragma: no cover - defensive
+                        logger.debug("Cancel WS send failed: %s", exc)
 
             session = await instance.get_session()
-            try:
-                async with session.post(
-                    f"{instance.base_url}/queue",
-                    json={"action": "cancel", "prompt_id": prompt_id},
-                ) as response:
-                    if response.status not in {200, 204}:
-                        logger.debug(
-                            "Cancel HTTP call returned %s", response.status
-                        )
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.debug("Cancel HTTP call failed: %s", exc)
+
+            async def _post(url: str, payload: dict, *, label: str) -> None:
+                try:
+                    async with session.post(url, json=payload) as response:
+                        if response.status not in {200, 204}:
+                            logger.debug("Cancel %s returned %s", label, response.status)
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug("Cancel %s failed: %s", label, exc)
+
+            await _post(
+                f"{instance.base_url}/interrupt",
+                {"client_id": instance.client_id},
+                label="interrupt",
+            )
+            await _post(
+                f"{instance.base_url}/queue",
+                {"prompt_id": prompt_id, "client_id": instance.client_id},
+                label="queue cancel",
+            )
 
         finally:
-            if prompt_id in instance.active_prompts:
-                instance.active_prompts.remove(prompt_id)
+            instance.active_prompts.discard(prompt_id)
+            self.prompt_to_instance.pop(prompt_id, None)
