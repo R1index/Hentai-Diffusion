@@ -73,7 +73,7 @@ class GenerationQueue:
             )
 
             try:
-                await job.func(*job.args, **job.kwargs)
+                await job.func(job.context, *job.args, **job.kwargs)
             except asyncio.CancelledError:  # pragma: no cover - defensive
                 logger.info(
                     "Queue: worker cancelled while handling user %s",
