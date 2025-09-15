@@ -67,10 +67,6 @@ class ComfyUIInstance:
                 elif response.status != 200:
                     raise Exception(f"Failed to connect to ComfyUI API: {response.status}")
 
-            ws_headers = {}
-            if self.auth and self.auth.api_key:
-                ws_headers['Authorization'] = f'Bearer {self.auth.api_key}'
-
             ws_kwargs = {
                 'origin': self.base_url,
             }
@@ -82,6 +78,7 @@ class ComfyUIInstance:
                 f"{self.ws_url}/ws?clientId={self.client_id}",
                 ping_interval=15,    # Отправлять ping каждые 20 секунд
                 ping_timeout=60,     # Ожидать ответ в течение 10 секунд
+                extra_headers={'Authorization': f'Bearer {self.auth.api_key}'} if self.auth and self.auth.api_key else None,
                 **ws_kwargs
             )
 
@@ -297,8 +294,8 @@ class ComfyUIClient:
 
                 session = await instance.get_session()
                 async with session.post(
-                        f"{instance.base_url}/prompt",
-                        json=prompt_data
+                    f"{instance.base_url}/prompt",
+                    json=prompt_data,
                 ) as response:
                     if response.status != 200:
                         error_text = await response.text()
@@ -345,7 +342,12 @@ class ComfyUIClient:
         percentage = int(100 * (value / max_value))
         return f"[{bar}] {percentage}%"
 
-    async def listen_for_updates(self, prompt_id: str, message_callback):
+    async def listen_for_updates(
+        self,
+        prompt_id: str,
+        message_callback,
+        cancel_event: Optional[asyncio.Event] = None,
+    ):
         """Listen for updates about a specific generation."""
 
         instance = self.prompt_to_instance.get(prompt_id)
@@ -356,13 +358,66 @@ class ComfyUIClient:
         start_time = time.time()
         session = await instance.get_session()
 
+        preview_state = {
+            "last_sent": 0.0,
+            "last_value": None,
+        }
+
+        async def build_image_files(
+            payload: Dict,
+            *,
+            default_name: str,
+        ) -> List[discord.File]:
+            results: List[discord.File] = []
+            image_info = payload.get("image")
+            if isinstance(image_info, dict):
+                raw_data = image_info.get("data")
+                if isinstance(raw_data, str):
+                    try:
+                        image_bytes = base64.b64decode(raw_data)
+                    except Exception:
+                        image_bytes = None
+                    if image_bytes:
+                        extension = "png"
+                        format_hint = image_info.get("format") or image_info.get("mime_type")
+                        if isinstance(format_hint, str):
+                            if "/" in format_hint:
+                                format_hint = format_hint.split("/", 1)[1]
+                            extension = format_hint.lower()
+                        filename = image_info.get("filename") or f"{default_name}.{extension}"
+                        results.append(discord.File(io.BytesIO(image_bytes), filename=filename))
+
+            images = payload.get("images")
+            if isinstance(images, list):
+                for image_data in images:
+                    if not isinstance(image_data, dict):
+                        continue
+                    image_url = self._get_image_url(instance, image_data)
+                    if not image_url:
+                        continue
+                    async with session.get(image_url) as response:
+                        if response.status != 200:
+                            continue
+                        image_bytes = await response.read()
+                        filename = image_data.get("filename") or f"{default_name}.png"
+                        results.append(discord.File(io.BytesIO(image_bytes), filename=filename))
+
+            return results
+
         async def emit(status: str, image_file: Optional[discord.File] = None) -> None:
             await message_callback(status, image_file)
 
         try:
             while True:
+                if cancel_event and cancel_event.is_set():
+                    await emit("🛑 Generation cancelled by user.")
+                    await self.cancel_prompt(prompt_id)
+                    break
+
                 try:
-                    message = await instance.ws.recv()
+                    message = await asyncio.wait_for(instance.ws.recv(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    continue
                 except websockets.ConnectionClosed:
                     logger.error("WebSocket connection closed unexpectedly")
                     await emit("❌ Connection closed unexpectedly. Attempting to reconnect...")
@@ -423,33 +478,63 @@ class ComfyUIClient:
                         await emit("✅ Generation completed")
                         break
 
+                elif msg_type == 'preview':
+                    node_id = str(msg_data.get('node') or "")
+                    if node_id != "12":
+                        continue
+
+                    now = time.time()
+                    value = msg_data.get('value')
+                    max_value = msg_data.get('max')
+                    if (
+                        preview_state["last_value"] is not None
+                        and value is not None
+                        and value <= preview_state["last_value"]
+                        and now - preview_state["last_sent"] < 2.0
+                    ):
+                        continue
+
+                    files = await build_image_files(
+                        msg_data,
+                        default_name=f"preview-{prompt_id}-{node_id}",
+                    )
+                    if not files:
+                        continue
+
+                    image_file = files[0]
+                    preview_state["last_sent"] = now
+                    preview_state["last_value"] = value
+
+                    elapsed_time = now - start_time
+                    step_info = ""
+                    if value is not None and max_value:
+                        step_info = f" ({value}/{max_value})"
+                    await emit(
+                        (
+                            f"🖼 Preview update from node {node_id}{step_info}\n"
+                            f"⏱ Time elapsed: {elapsed_time:.2f} seconds"
+                        ),
+                        image_file,
+                    )
+
                 elif msg_type == 'executed':
                     node_output = msg_data.get('output')
                     if not isinstance(node_output, dict):
                         continue
 
-                    for image_data in node_output.get('images', []):
-                        if not isinstance(image_data, dict) or 'filename' not in image_data:
-                            continue
+                    files = await build_image_files(
+                        node_output,
+                        default_name=f"output-{prompt_id}",
+                    )
+                    if not files:
+                        continue
 
-                        image_url = self._get_image_url(instance, image_data)
-                        if not image_url:
-                            continue
-
-                        async with session.get(image_url) as response:
-                            if response.status != 200:
-                                continue
-
-                            image_bytes = await response.read()
-                            image_file = discord.File(
-                                io.BytesIO(image_bytes),
-                                filename=image_data.get('filename', 'output.png'),
-                            )
-                            elapsed_time = time.time() - start_time
-                            await emit(
-                                f"🖼 New image generated!\n⏱ Time elapsed: {elapsed_time:.2f} seconds",
-                                image_file,
-                            )
+                    elapsed_time = time.time() - start_time
+                    for image_file in files:
+                        await emit(
+                            f"🖼 New image generated!\n⏱ Time elapsed: {elapsed_time:.2f} seconds",
+                            image_file,
+                        )
 
                 elif msg_type == 'error':
                     error_msg = msg_data.get('error', 'Unknown error')
@@ -484,3 +569,47 @@ class ComfyUIClient:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.close()
+
+    async def cancel_prompt(self, prompt_id: str) -> None:
+        """Attempt to cancel an in-flight prompt."""
+
+        instance = self.prompt_to_instance.get(prompt_id)
+        if not instance:
+            logger.debug("Cancel: prompt %s has no associated instance", prompt_id)
+            return
+
+        try:
+            if instance.ws and not instance.ws.closed:
+                for payload in (
+                    {"type": "interrupt"},
+                    {"type": "cancel", "data": {"prompt_id": prompt_id}},
+                ):
+                    try:
+                        await instance.ws.send(json.dumps(payload))
+                    except Exception as exc:  # pragma: no cover - defensive
+                        logger.debug("Cancel WS send failed: %s", exc)
+
+            session = await instance.get_session()
+
+            async def _post(url: str, payload: dict, *, label: str) -> None:
+                try:
+                    async with session.post(url, json=payload) as response:
+                        if response.status not in {200, 204}:
+                            logger.debug("Cancel %s returned %s", label, response.status)
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug("Cancel %s failed: %s", label, exc)
+
+            await _post(
+                f"{instance.base_url}/interrupt",
+                {"client_id": instance.client_id},
+                label="interrupt",
+            )
+            await _post(
+                f"{instance.base_url}/queue",
+                {"prompt_id": prompt_id, "client_id": instance.client_id},
+                label="queue cancel",
+            )
+
+        finally:
+            instance.active_prompts.discard(prompt_id)
+            self.prompt_to_instance.pop(prompt_id, None)
