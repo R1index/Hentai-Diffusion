@@ -1,5 +1,5 @@
 discord:
-  token: 
+  token: null
 comfyui:
   instances:
   - url: http://127.0.0.1:8188
@@ -39,40 +39,62 @@ workflows:
         ]   = 0.0\n"
     - name: config
       description: Configure generation parameters
-      code: "def config(workflowjson, *args):\n    import random\n\n    def get(node_id):\n\
-        \        return workflowjson.get(str(node_id))\n\n    def find_lora_stacker(fallback_id=\"\
-        49\"):\n        n = workflowjson.get(str(fallback_id))\n        if n and n.get(\"\
-        class_type\",\"\").lower().find(\"lora\") != -1 and \"inputs\" in n:\n   \
-        \         return str(fallback_id)\n        for k, v in workflowjson.items():\n\
-        \            if isinstance(v, dict) and v.get(\"class_type\",\"\").lower().find(\"\
-        lora stacker\") != -1:\n                return k\n        return None\n\n\
-        \    def safe_set(node_id, key, value):\n        n = get(node_id)\n      \
-        \  if n and \"inputs\" in n:\n            n[\"inputs\"][key] = value\n\n \
-        \   params = {}\n    for arg in args:\n        if '=' in arg:\n          \
-        \  key, value = arg.split('=', 1)\n            params[key.strip()] = value.strip()\n\
-        \n    # style\n    safe_set(47, \"index\", int(params.get(\"style\", 0)))\n\
+      code: "def config(workflowjson, *args):\n    import random\n    import re\n\n\
+        \    def get(node_id):\n        return workflowjson.get(str(node_id))\n\n\
+        \    def find_lora_stacker(fallback_id=\"49\"):\n        node = workflowjson.get(str(fallback_id))\n\
+        \        if node and node.get(\"class_type\", \"\").lower().find(\"lora\"\
+        ) != -1 and \"inputs\" in node:\n            return str(fallback_id)\n   \
+        \     for key, value in workflowjson.items():\n            if isinstance(value,\
+        \ dict) and value.get(\"class_type\", \"\").lower().find(\"lora stacker\"\
+        ) != -1:\n                return key\n        return None\n\n    def safe_set(node_id,\
+        \ key, value):\n        node = get(node_id)\n        if node and \"inputs\"\
+        \ in node:\n            node[\"inputs\"][key] = value\n\n    params = {}\n\
+        \    for arg in args:\n        if \"=\" in arg:\n            key, value =\
+        \ arg.split(\"=\", 1)\n            params[key.strip()] = value.strip()\n\n\
+        \    resolution_aliases = {\n        \"portrait\": (\"portrait - 832x1216\
+        \ (2:3)\", 832, 1216),\n        \"portrait - 832x1216 (2:3)\": (\"portrait\
+        \ - 832x1216 (2:3)\", 832, 1216),\n        \"p\": (\"portrait - 832x1216 (2:3)\"\
+        , 832, 1216),\n        \"landscape\": (\"landscape - 1216x832 (3:2)\", 1216,\
+        \ 832),\n        \"landscape - 1216x832 (3:2)\": (\"landscape - 1216x832 (3:2)\"\
+        , 1216, 832),\n        \"l\": (\"landscape - 1216x832 (3:2)\", 1216, 832),\n\
+        \        \"square\": (\"square - 1024x1024 (1:1)\", 1024, 1024),\n       \
+        \ \"square - 1024x1024 (1:1)\": (\"square - 1024x1024 (1:1)\", 1024, 1024),\n\
+        \    }\n\n    def parse_resolution(value):\n        if not value:\n      \
+        \      return None\n        raw = value.strip()\n        key = raw.lower()\n\
+        \        alias = resolution_aliases.get(key)\n        if alias:\n        \
+        \    return alias\n        match = re.match(r\"^(\\d+)[x×](\\d+)$\", key)\n\
+        \        if match:\n            width = int(match.group(1))\n            height\
+        \ = int(match.group(2))\n            return raw, width, height\n        return\
+        \ None\n\n    if \"resolution\" in params:\n        parsed = parse_resolution(params[\"\
+        resolution\"])\n        if parsed:\n            label, width, height = parsed\n\
+        \            if label:\n                safe_set(9, \"resolution\", label)\n\
+        \            if width and height:\n                safe_set(11, \"empty_latent_width\"\
+        , width)\n                safe_set(11, \"empty_latent_height\", height)\n\n\
+        \    # style\n    safe_set(47, \"index\", int(params.get(\"style\", 0)))\n\
         \n    # seed\n    if \"seed\" in params:\n        safe_set(21, \"seed\", int(params[\"\
         seed\"]))\n    else:\n        safe_set(21, \"seed\", random.randint(0, 2**32\
         \ - 1))\n\n    # model\n    if \"model\" in params:\n        model_name =\
-        \ params[\"model\"]\n        if not model_name.endswith('.safetensors'):\n\
-        \            model_name += '.safetensors'\n        safe_set(11, \"ckpt_name\"\
+        \ params[\"model\"]\n        if not model_name.endswith(\".safetensors\"):\n\
+        \            model_name += \".safetensors\"\n        safe_set(11, \"ckpt_name\"\
         , model_name)\n        safe_set(11, \"vae_name\", \"Baked VAE\")\n       \
         \ # здесь у тебя всегда None — оставим так, т.к. LoRA переключаем отдельно\n\
         \        safe_set(11, \"lora_name\", \"None\")\n    else:\n        safe_set(11,\
         \ \"lora_name\", \"None\")\n        safe_set(11, \"vae_name\", \"Baked VAE\"\
         )\n        safe_set(11, \"ckpt_name\", \"aozoraXLVpred_v01AlphaVpred.safetensors\"\
         )\n\n    # lora → через LoRA Stacker (если есть)\n    ls_id = find_lora_stacker(\"\
-        49\")\n    def apply_lora_stack(name_or_none):\n        if not ls_id:\n  \
-        \          return\n        for i in (1,2):\n            workflowjson[ls_id][\"\
-        inputs\"][f\"lora_name_{i}\"] = name_or_none\n            # гасим обязательные\
-        \ поля — если нужно влияние, поменяешь с 0.0\n            workflowjson[ls_id][\"\
-        inputs\"][f\"model_str_{i}\"] = 0.0\n            workflowjson[ls_id][\"inputs\"\
-        ][f\"clip_str_{i}\"]  = 0.0\n            workflowjson[ls_id][\"inputs\"][f\"\
-        lora_wt_{i}\"]   = 0.0\n\n    if \"lora\" in params:\n        lora_name =\
-        \ params[\"lora\"]\n        if not lora_name.endswith('.safetensors'):\n \
-        \           lora_name += '.safetensors'\n        if lora_name.startswith(\"\
-        samekosaba\"):\n            apply_lora_stack(\"samekosaba.safetensors\")\n\
-        \            if ls_id:\n                workflowjson[ls_id][\"inputs\"][\"\
+        49\")\n\n    def apply_lora_stack(name_or_none):\n        if not ls_id:\n\
+        \            return\n        node = workflowjson.get(ls_id)\n        if not\
+        \ node or \"inputs\" not in node:\n            return\n        for i in (1,\
+        \ 2):\n            node[\"inputs\"][f\"lora_name_{i}\"] = name_or_none\n \
+        \           # гасим обязательные поля — если нужно влияние, поменяешь с 0.0\n\
+        \            node[\"inputs\"][f\"model_str_{i}\"] = 0.0\n            node[\"\
+        inputs\"][f\"clip_str_{i}\"] = 0.0\n            node[\"inputs\"][f\"lora_wt_{i}\"\
+        ] = 0.0\n\n    if \"lora\" in params:\n        lora_name = params[\"lora\"\
+        ]\n        if not lora_name.endswith(\".safetensors\"):\n            lora_name\
+        \ += \".safetensors\"\n        if lora_name.startswith(\"samekosaba\"):\n\
+        \            apply_lora_stack(\"samekosaba.safetensors\")\n            if\
+        \ ls_id:\n                node = workflowjson.get(ls_id)\n               \
+        \ if node and \"inputs\" in node:\n                    node[\"inputs\"][\"\
         lora_name_2\"] = \"samekosaba2.safetensors\"\n        else:\n            apply_lora_stack(lora_name)\n\
         \    else:\n        apply_lora_stack(\"None\")\n"
   ExpNEWlandscape:
@@ -106,40 +128,62 @@ workflows:
         ]   = 0.0\n"
     - name: config
       description: Configure generation parameters
-      code: "def config(workflowjson, *args):\n    import random\n\n    def get(node_id):\n\
-        \        return workflowjson.get(str(node_id))\n\n    def find_lora_stacker(fallback_id=\"\
-        49\"):\n        n = workflowjson.get(str(fallback_id))\n        if n and n.get(\"\
-        class_type\",\"\").lower().find(\"lora\") != -1 and \"inputs\" in n:\n   \
-        \         return str(fallback_id)\n        for k, v in workflowjson.items():\n\
-        \            if isinstance(v, dict) and v.get(\"class_type\",\"\").lower().find(\"\
-        lora stacker\") != -1:\n                return k\n        return None\n\n\
-        \    def safe_set(node_id, key, value):\n        n = get(node_id)\n      \
-        \  if n and \"inputs\" in n:\n            n[\"inputs\"][key] = value\n\n \
-        \   params = {}\n    for arg in args:\n        if '=' in arg:\n          \
-        \  key, value = arg.split('=', 1)\n            params[key.strip()] = value.strip()\n\
-        \n    # style\n    safe_set(47, \"index\", int(params.get(\"style\", 0)))\n\
+      code: "def config(workflowjson, *args):\n    import random\n    import re\n\n\
+        \    def get(node_id):\n        return workflowjson.get(str(node_id))\n\n\
+        \    def find_lora_stacker(fallback_id=\"49\"):\n        node = workflowjson.get(str(fallback_id))\n\
+        \        if node and node.get(\"class_type\", \"\").lower().find(\"lora\"\
+        ) != -1 and \"inputs\" in node:\n            return str(fallback_id)\n   \
+        \     for key, value in workflowjson.items():\n            if isinstance(value,\
+        \ dict) and value.get(\"class_type\", \"\").lower().find(\"lora stacker\"\
+        ) != -1:\n                return key\n        return None\n\n    def safe_set(node_id,\
+        \ key, value):\n        node = get(node_id)\n        if node and \"inputs\"\
+        \ in node:\n            node[\"inputs\"][key] = value\n\n    params = {}\n\
+        \    for arg in args:\n        if \"=\" in arg:\n            key, value =\
+        \ arg.split(\"=\", 1)\n            params[key.strip()] = value.strip()\n\n\
+        \    resolution_aliases = {\n        \"portrait\": (\"portrait - 832x1216\
+        \ (2:3)\", 832, 1216),\n        \"portrait - 832x1216 (2:3)\": (\"portrait\
+        \ - 832x1216 (2:3)\", 832, 1216),\n        \"p\": (\"portrait - 832x1216 (2:3)\"\
+        , 832, 1216),\n        \"landscape\": (\"landscape - 1216x832 (3:2)\", 1216,\
+        \ 832),\n        \"landscape - 1216x832 (3:2)\": (\"landscape - 1216x832 (3:2)\"\
+        , 1216, 832),\n        \"l\": (\"landscape - 1216x832 (3:2)\", 1216, 832),\n\
+        \        \"square\": (\"square - 1024x1024 (1:1)\", 1024, 1024),\n       \
+        \ \"square - 1024x1024 (1:1)\": (\"square - 1024x1024 (1:1)\", 1024, 1024),\n\
+        \    }\n\n    def parse_resolution(value):\n        if not value:\n      \
+        \      return None\n        raw = value.strip()\n        key = raw.lower()\n\
+        \        alias = resolution_aliases.get(key)\n        if alias:\n        \
+        \    return alias\n        match = re.match(r\"^(\\d+)[x×](\\d+)$\", key)\n\
+        \        if match:\n            width = int(match.group(1))\n            height\
+        \ = int(match.group(2))\n            return raw, width, height\n        return\
+        \ None\n\n    if \"resolution\" in params:\n        parsed = parse_resolution(params[\"\
+        resolution\"])\n        if parsed:\n            label, width, height = parsed\n\
+        \            if label:\n                safe_set(9, \"resolution\", label)\n\
+        \            if width and height:\n                safe_set(11, \"empty_latent_width\"\
+        , width)\n                safe_set(11, \"empty_latent_height\", height)\n\n\
+        \    # style\n    safe_set(47, \"index\", int(params.get(\"style\", 0)))\n\
         \n    # seed\n    if \"seed\" in params:\n        safe_set(21, \"seed\", int(params[\"\
         seed\"]))\n    else:\n        safe_set(21, \"seed\", random.randint(0, 2**32\
         \ - 1))\n\n    # model\n    if \"model\" in params:\n        model_name =\
-        \ params[\"model\"]\n        if not model_name.endswith('.safetensors'):\n\
-        \            model_name += '.safetensors'\n        safe_set(11, \"ckpt_name\"\
+        \ params[\"model\"]\n        if not model_name.endswith(\".safetensors\"):\n\
+        \            model_name += \".safetensors\"\n        safe_set(11, \"ckpt_name\"\
         , model_name)\n        safe_set(11, \"vae_name\", \"Baked VAE\")\n       \
         \ # здесь у тебя всегда None — оставим так, т.к. LoRA переключаем отдельно\n\
         \        safe_set(11, \"lora_name\", \"None\")\n    else:\n        safe_set(11,\
         \ \"lora_name\", \"None\")\n        safe_set(11, \"vae_name\", \"Baked VAE\"\
         )\n        safe_set(11, \"ckpt_name\", \"aozoraXLVpred_v01AlphaVpred.safetensors\"\
         )\n\n    # lora → через LoRA Stacker (если есть)\n    ls_id = find_lora_stacker(\"\
-        49\")\n    def apply_lora_stack(name_or_none):\n        if not ls_id:\n  \
-        \          return\n        for i in (1,2):\n            workflowjson[ls_id][\"\
-        inputs\"][f\"lora_name_{i}\"] = name_or_none\n            # гасим обязательные\
-        \ поля — если нужно влияние, поменяешь с 0.0\n            workflowjson[ls_id][\"\
-        inputs\"][f\"model_str_{i}\"] = 0.0\n            workflowjson[ls_id][\"inputs\"\
-        ][f\"clip_str_{i}\"]  = 0.0\n            workflowjson[ls_id][\"inputs\"][f\"\
-        lora_wt_{i}\"]   = 0.0\n\n    if \"lora\" in params:\n        lora_name =\
-        \ params[\"lora\"]\n        if not lora_name.endswith('.safetensors'):\n \
-        \           lora_name += '.safetensors'\n        if lora_name.startswith(\"\
-        samekosaba\"):\n            apply_lora_stack(\"samekosaba.safetensors\")\n\
-        \            if ls_id:\n                workflowjson[ls_id][\"inputs\"][\"\
+        49\")\n\n    def apply_lora_stack(name_or_none):\n        if not ls_id:\n\
+        \            return\n        node = workflowjson.get(ls_id)\n        if not\
+        \ node or \"inputs\" not in node:\n            return\n        for i in (1,\
+        \ 2):\n            node[\"inputs\"][f\"lora_name_{i}\"] = name_or_none\n \
+        \           # гасим обязательные поля — если нужно влияние, поменяешь с 0.0\n\
+        \            node[\"inputs\"][f\"model_str_{i}\"] = 0.0\n            node[\"\
+        inputs\"][f\"clip_str_{i}\"] = 0.0\n            node[\"inputs\"][f\"lora_wt_{i}\"\
+        ] = 0.0\n\n    if \"lora\" in params:\n        lora_name = params[\"lora\"\
+        ]\n        if not lora_name.endswith(\".safetensors\"):\n            lora_name\
+        \ += \".safetensors\"\n        if lora_name.startswith(\"samekosaba\"):\n\
+        \            apply_lora_stack(\"samekosaba.safetensors\")\n            if\
+        \ ls_id:\n                node = workflowjson.get(ls_id)\n               \
+        \ if node and \"inputs\" in node:\n                    node[\"inputs\"][\"\
         lora_name_2\"] = \"samekosaba2.safetensors\"\n        else:\n            apply_lora_stack(lora_name)\n\
         \    else:\n        apply_lora_stack(\"None\")\n"
   forge:
