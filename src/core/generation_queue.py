@@ -31,6 +31,10 @@ class GenerationQueue:
         self._worker: Optional[asyncio.Task[None]] = None
         self._current: Optional[QueuedGeneration] = None
 
+    @staticmethod
+    def _context_label(context: "GenerationContext") -> str:
+        return getattr(context, "user_log_label", getattr(context, "user_id", "unknown"))
+
     async def add_to_queue(
         self,
         generation_func: Callable[..., Awaitable[None]],
@@ -44,7 +48,7 @@ class GenerationQueue:
         await self._queue.put(job)
         logger.info(
             "Queue: added request for user %s • size=%d",
-            context.user_id,
+            self._context_label(context),
             self._queue.qsize(),
         )
 
@@ -61,14 +65,14 @@ class GenerationQueue:
             if job.context.cancel_event.is_set():
                 logger.info(
                     "Queue: skipping cancelled request for user %s",
-                    job.context.user_id,
+                    self._context_label(job.context),
                 )
                 self._queue.task_done()
                 continue
 
             logger.info(
                 "Queue: processing request for user %s • remaining=%d",
-                job.context.user_id,
+                self._context_label(job.context),
                 self._queue.qsize(),
             )
 
@@ -77,13 +81,13 @@ class GenerationQueue:
             except asyncio.CancelledError:  # pragma: no cover - defensive
                 logger.info(
                     "Queue: worker cancelled while handling user %s",
-                    job.context.user_id,
+                    self._context_label(job.context),
                 )
                 raise
             except Exception as exc:  # pragma: no cover - defensive
                 logger.error(
                     "Queue: error while processing request for user %s: %s",
-                    job.context.user_id,
+                    self._context_label(job.context),
                     exc,
                 )
             finally:
@@ -106,7 +110,7 @@ class GenerationQueue:
                 removed = True
                 logger.info(
                     "Queue: removed pending request for user %s",
-                    context.user_id,
+                    self._context_label(context),
                 )
                 self._queue.task_done()
                 continue

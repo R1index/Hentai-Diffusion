@@ -12,7 +12,7 @@ import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 import discord
 import yaml
@@ -31,6 +31,20 @@ from ..ui import embeds as ui_embeds
 from ..ui.views import GenerationView
 
 
+def _resolve_user_identity(user: discord.abc.User, user_id: str) -> Tuple[str, str]:
+    """Return a display name and log label for the provided user."""
+
+    raw_display = (
+        getattr(user, "display_name", None)
+        or getattr(user, "global_name", None)
+        or getattr(user, "name", None)
+        or ""
+    )
+    cleaned_display = " ".join(raw_display.split()) if raw_display else user_id
+    log_label = user_id if cleaned_display == user_id else f"{user_id}/{cleaned_display}"
+    return cleaned_display, log_label
+
+
 @dataclass
 class GenerationContext:
     """State for a single in-flight generation."""
@@ -47,16 +61,28 @@ class GenerationContext:
     prompt_id: Optional[str] = None
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
     view: Optional[GenerationView] = None
-    counted_usage: bool = False
     completed: bool = False
     cancelled_notified: bool = False
     finalized: bool = False
+    user_display_name: str = field(init=False)
+    user_log_label: str = field(init=False)
+    mode_field: ui_embeds.EmbedField = field(init=False)
+    started_field: ui_embeds.EmbedField = field(init=False)
+
+    def __post_init__(self) -> None:
+        display_name, log_label = _resolve_user_identity(self.user, self.user_id)
+        self.user_display_name = display_name
+        self.user_log_label = log_label
+        self.mode_field = ("🎯 Mode", self.workflow_type.upper(), True)
+        self.started_field = ("🕒 Started", f"<t:{int(self.started_at)}:R>", True)
 
 
 class ComfyUIBot(commands.Bot):
     GENERATION_COUNTS_FILE = "generation_counts.yml"
     DAILY_GENERATION_LIMIT = 50
     QUEUE_STUCK_THRESHOLD = 1800  # 30 minutes
+    MAX_IMAGE_ATTACHMENT_MB = 20
+    MAX_IMAGE_ATTACHMENT_BYTES = MAX_IMAGE_ATTACHMENT_MB * 1024 * 1024
 
     def __init__(self, configuration_path: str = "configuration.yml", plugins_path: str = "plugins"):
         intents = discord.Intents.default()
@@ -220,7 +246,7 @@ class ComfyUIBot(commands.Bot):
         ]
 
         for context in stuck_contexts:
-            logger.warning("gen[%s] timed out — cancelling", context.user_id)
+            logger.warning("gen[%s] timed out — cancelling", context.user_log_label)
             context.cancel_event.set()
             if self.comfy_client and context.prompt_id:
                 try:
@@ -523,9 +549,10 @@ class ComfyUIBot(commands.Bot):
             await self._send_active_generation_message(interaction)
             return
 
+        _, user_label = _resolve_user_identity(interaction.user, user_id)
         logger.info(
             "gen[%s] request received • type=%s workflow=%s",
-            user_id,
+            user_label,
             workflow_type,
             workflow or "default",
         )
@@ -550,7 +577,6 @@ class ComfyUIBot(commands.Bot):
                     return
 
                 self.user_generation_counts[user_id] = current_usage + 1
-                context.counted_usage = True
                 self._save_generation_counts()
 
                 try:
@@ -579,7 +605,12 @@ class ComfyUIBot(commands.Bot):
         except Exception as exc:
             if not interaction.response.is_done():
                 await self._send_error_message(interaction, str(exc))
-            logger.error("Generation error: %s", exc, exc_info=True)
+            logger.error(
+                "Generation error for %s: %s",
+                context.user_log_label,
+                exc,
+                exc_info=True,
+            )
             self._finalize_generation_context(context, success=False)
             raise
     async def _process_generation(
@@ -643,6 +674,18 @@ class ComfyUIBot(commands.Bot):
                 embed = ui_embeds.build_notice_embed(
                     title="❌ Invalid image",
                     description="Provide a valid PNG/JPG/JPEG/WEBP image for this workflow.",
+                    color=ui_embeds.ERROR_COLOR,
+                )
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+                self._finalize_generation_context(context, success=False)
+                return
+            if input_image.size and input_image.size > self.MAX_IMAGE_ATTACHMENT_BYTES:
+                embed = ui_embeds.build_notice_embed(
+                    title="❌ Image too large",
+                    description=(
+                        "Please upload an image smaller than "
+                        f"{self.MAX_IMAGE_ATTACHMENT_MB} MB for processing."
+                    ),
                     color=ui_embeds.ERROR_COLOR,
                 )
                 await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -713,7 +756,7 @@ class ComfyUIBot(commands.Bot):
 
             logger.info(
                 "gen[%s] submitting workflow=%s type=%s",
-                context.user_id,
+                context.user_log_label,
                 workflow_name,
                 workflow_type,
             )
@@ -733,13 +776,11 @@ class ComfyUIBot(commands.Bot):
 
             async def update(status: str, image_file: Optional[discord.File] = None) -> None:
                 color, title = self._determine_status_style(status, image_file is not None)
-                elapsed = time.time() - start_ts
                 await self._update_generation_message(
                     context,
                     status=status,
                     title=title,
                     color=color,
-                    extra_fields=[("⏱ Elapsed", f"{elapsed:.1f}s", True)],
                     image_file=image_file,
                 )
 
@@ -757,13 +798,13 @@ class ComfyUIBot(commands.Bot):
             context.completed = True
             logger.info(
                 "gen[%s] completed workflow=%s in %.2fs",
-                context.user_id,
+                context.user_log_label,
                 workflow_name,
                 time.time() - start_ts,
             )
 
         except Exception as exc:
-            logger.error("gen[%s] failed: %s", context.user_id, exc, exc_info=True)
+            logger.error("gen[%s] failed: %s", context.user_log_label, exc, exc_info=True)
             await self._update_generation_message(
                 context,
                 status=f"❌ {exc}",
@@ -824,7 +865,7 @@ class ComfyUIBot(commands.Bot):
         try:
             await context.message.edit(**kwargs)
         except discord.HTTPException as exc:  # pragma: no cover - defensive
-            logger.debug("Failed to update message for %s: %s", context.user_id, exc)
+            logger.debug("Failed to update message for %s: %s", context.user_log_label, exc)
 
     def _build_generation_embed(
         self,
@@ -835,10 +876,10 @@ class ComfyUIBot(commands.Bot):
         color: int,
         extra_fields: Optional[List[ui_embeds.EmbedField]] = None,
     ) -> discord.Embed:
-        fields: List[ui_embeds.EmbedField] = [("🎯 Mode", context.workflow_type.upper(), True)]
+        fields: List[ui_embeds.EmbedField] = [context.mode_field]
         if extra_fields:
             fields.extend(extra_fields)
-        fields.append(("🕒 Started", f"<t:{int(context.started_at)}:R>", True))
+        fields.append(context.started_field)
 
         return ui_embeds.build_generation_embed(
             title=title,
@@ -871,7 +912,7 @@ class ComfyUIBot(commands.Bot):
             await interaction.followup.send("Generation already cancelled.", ephemeral=True)
             return
 
-        logger.info("gen[%s] cancellation requested", context.user_id)
+        logger.info("gen[%s] cancellation requested", context.user_log_label)
         context.cancel_event.set()
         await self.generation_queue.cancel_pending(context)
 
@@ -906,23 +947,6 @@ class ComfyUIBot(commands.Bot):
 
         context.finalized = True
         self.active_generations.pop(context.user_id, None)
-
-        if context.counted_usage and not success:
-            new_value = max(0, self.user_generation_counts.get(context.user_id, 0) - 1)
-            self.user_generation_counts[context.user_id] = new_value
-            self._save_generation_counts()
-
-            try:
-                asyncio.create_task(
-                    self._publish_limit_update(
-                        user_id=int(context.user_id),
-                        used=new_value,
-                        limit=self.DAILY_GENERATION_LIMIT,
-                        reset_at=float(self.last_reset_time + 86400.0),
-                    )
-                )
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.debug("SYNC publish rollback skipped: %s", exc)
 
     async def _send_blocked_message(self, interaction: discord.Interaction) -> None:
         embed = ui_embeds.build_notice_embed(
@@ -965,6 +989,7 @@ class ComfyUIBot(commands.Bot):
 
     async def _has_unlimited_access(self, interaction: discord.Interaction) -> bool:
         try:
+            requester_label = _resolve_user_identity(interaction.user, str(interaction.user.id))[1]
             if not self.access_guild_id:
                 logger.info("Supporter check: access_guild_id is empty")
                 return False
@@ -992,9 +1017,18 @@ class ComfyUIBot(commands.Bot):
             if member is None:
                 try:
                     member = await target_guild.fetch_member(interaction.user.id)
-                    logger.debug("Supporter check: fetched member %s on guild %s", interaction.user.id, gid)
+                    logger.debug(
+                        "Supporter check: fetched member %s on guild %s",
+                        requester_label,
+                        gid,
+                    )
                 except Exception as exc:
-                    logger.info("Supporter check: user %s is not in guild %s: %s", interaction.user.id, gid, exc)
+                    logger.info(
+                        "Supporter check: user %s is not in guild %s: %s",
+                        requester_label,
+                        gid,
+                        exc,
+                    )
                     return False
 
             role = None
@@ -1026,10 +1060,11 @@ class ComfyUIBot(commands.Bot):
 
             member_role_ids = {r.id for r in getattr(member, "roles", [])}
             has_role = role.id in member_role_ids
+            member_label = _resolve_user_identity(member, str(member.id))[1]
             logger.info(
                 "Supporter check: guild=%s member=%s role=%s/%s has=%s",
                 gid,
-                member.id,
+                member_label,
                 role.id,
                 role.name,
                 has_role,
