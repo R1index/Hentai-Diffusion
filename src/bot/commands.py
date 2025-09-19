@@ -161,11 +161,78 @@ def workflows_command(bot):
         if embed.fields:
             embeds.append(embed)
 
-        # Отправляем первый ответ
+        # Send the first response
         await interaction.response.send_message(embed=embeds[0])
 
-        # Отправляем оставшиеся вложения
+        # Send the remaining embeds
         for embed in embeds[1:]:
             await interaction.followup.send(embed=embed)
 
     return workflows
+
+
+def profile_command(bot):
+    """Create the profile command for viewing personal statistics."""
+
+    @app_commands.command(
+        name="profile",
+        description="Show your generation stats and sponsorship status",
+    )
+    async def profile(interaction: discord.Interaction) -> None:
+        user_id = str(interaction.user.id)
+        bot._reset_counts_if_needed()
+        stats = bot.get_user_generation_summary(user_id)
+
+        supporter_role = await bot._has_unlimited_access(interaction)
+        listed_donor = user_id in bot.donor_users
+        has_unlimited = supporter_role or listed_donor
+
+        status_details = []
+        if listed_donor:
+            status_details.append("listed as donor")
+        if supporter_role:
+            status_details.append("has supporter role")
+
+        if status_details:
+            sponsorship_status = f"💎 Active ({', '.join(status_details)})"
+        else:
+            sponsorship_status = "🪙 Inactive"
+
+        embed = discord.Embed(
+            title="👤 User Profile",
+            description=f"Stats for {interaction.user.mention}",
+            color=0x5865F2,
+        )
+
+        if interaction.user.display_avatar:
+            embed.set_thumbnail(url=interaction.user.display_avatar.url)
+
+        stats_lines = [
+            f"Today: **{stats['day']}**",
+            f"7 days: **{stats['week']}**",
+            f"30 days: **{stats['month']}**",
+            f"All time: **{stats['total']}**",
+        ]
+        embed.add_field(name="📈 Generations", value="\n".join(stats_lines), inline=False)
+        embed.add_field(name="💖 Sponsorship", value=sponsorship_status, inline=False)
+
+        if has_unlimited:
+            limit_value = "Unlimited — thank you for supporting us!"
+            embed.add_field(name="💎 Daily limit", value=limit_value, inline=False)
+        else:
+            used = int(bot.user_generation_counts.get(user_id, 0))
+            limit = int(bot.DAILY_GENERATION_LIMIT)
+            remaining = max(0, limit - used)
+            reset_hint = bot._format_time_remaining()
+            limit_lines = [
+                f"Used: **{used}** / **{limit}**",
+                f"Remaining today: **{remaining}**",
+                f"Resets in: {reset_hint}",
+            ]
+            embed.add_field(name="🔒 Daily limit", value="\n".join(limit_lines), inline=False)
+
+        embed.set_footer(text="Support us ❤️ boosty.to/rindex")
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    return profile
