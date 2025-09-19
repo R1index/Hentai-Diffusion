@@ -169,3 +169,52 @@ def workflows_command(bot):
             await interaction.followup.send(embed=embed)
 
     return workflows
+
+
+def profile_command(bot):
+    """Create the profile command for viewing personal statistics."""
+
+    @app_commands.command(
+        name="profile",
+        description="Показать статистику генераций и статус спонсорства",
+    )
+    async def profile(interaction: discord.Interaction) -> None:
+        user_id = str(interaction.user.id)
+        stats = bot.get_user_generation_summary(user_id)
+
+        supporter_role = await bot._has_unlimited_access(interaction)
+        listed_donor = user_id in bot.donor_users
+
+        status_details = []
+        if listed_donor:
+            status_details.append("в списке доноров")
+        if supporter_role:
+            status_details.append("есть роль поддержки")
+
+        if status_details:
+            sponsorship_status = f"💎 Активен ({', '.join(status_details)})"
+        else:
+            sponsorship_status = "🪙 Не активен"
+
+        embed = discord.Embed(
+            title="👤 Профиль пользователя",
+            description=f"Статистика для {interaction.user.mention}",
+            color=0x5865F2,
+        )
+
+        if interaction.user.display_avatar:
+            embed.set_thumbnail(url=interaction.user.display_avatar.url)
+
+        stats_lines = [
+            f"Сегодня: **{stats['day']}**",
+            f"7 дней: **{stats['week']}**",
+            f"30 дней: **{stats['month']}**",
+            f"Всего: **{stats['total']}**",
+        ]
+        embed.add_field(name="📈 Генерации", value="\n".join(stats_lines), inline=False)
+        embed.add_field(name="💖 Спонсорство", value=sponsorship_status, inline=False)
+        embed.set_footer(text="Support us ❤️ boosty.to/rindex")
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    return profile
