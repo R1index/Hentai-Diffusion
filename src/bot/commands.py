@@ -180,10 +180,12 @@ def profile_command(bot):
     )
     async def profile(interaction: discord.Interaction) -> None:
         user_id = str(interaction.user.id)
+        bot._reset_counts_if_needed()
         stats = bot.get_user_generation_summary(user_id)
 
         supporter_role = await bot._has_unlimited_access(interaction)
         listed_donor = user_id in bot.donor_users
+        has_unlimited = supporter_role or listed_donor
 
         status_details = []
         if listed_donor:
@@ -213,6 +215,22 @@ def profile_command(bot):
         ]
         embed.add_field(name="📈 Generations", value="\n".join(stats_lines), inline=False)
         embed.add_field(name="💖 Sponsorship", value=sponsorship_status, inline=False)
+
+        if has_unlimited:
+            limit_value = "Unlimited — thank you for supporting us!"
+            embed.add_field(name="💎 Daily limit", value=limit_value, inline=False)
+        else:
+            used = int(bot.user_generation_counts.get(user_id, 0))
+            limit = int(bot.DAILY_GENERATION_LIMIT)
+            remaining = max(0, limit - used)
+            reset_hint = bot._format_time_remaining()
+            limit_lines = [
+                f"Used: **{used}** / **{limit}**",
+                f"Remaining today: **{remaining}**",
+                f"Resets in: {reset_hint}",
+            ]
+            embed.add_field(name="🔒 Daily limit", value="\n".join(limit_lines), inline=False)
+
         embed.set_footer(text="Support us ❤️ boosty.to/rindex")
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
