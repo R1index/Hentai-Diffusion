@@ -1,259 +1,499 @@
 discord:
-  token: 
+  token:
+
 comfyui:
-  instances:
-  - url: http://127.0.0.1:8188
-    auth:
-      ssl_verify: false
-    weight: 1
   input_dir: COMFYUI_INPUT_DIR
+  instances:
+    - url: http://127.0.0.1:8188
+      auth:
+        ssl_verify: false
+      weight: 1
+
 workflows:
   ExpNEW:
     type: txt2img
     description: Workflow type 1.
     workflow: ./workflows/ExpNEW.json
-    text_prompt_node_id: '45'
+    text_prompt_node_id: 45
     default: true
     settings:
-    - name: __before
-      description: Will change steps for this workflow to the number provided in parenthesis
-      code: "def __before(workflowjson):\n    import random\n\n    def get(node_id):\n\
-        \        return workflowjson.get(str(node_id))\n\n    def find_lora_stacker(fallback_id=\"\
-        49\"):\n        n = workflowjson.get(str(fallback_id))\n        if n and n.get(\"\
-        class_type\",\"\").lower().find(\"lora\") != -1 and \"inputs\" in n:\n   \
-        \         return str(fallback_id)\n        # поиск по class_type\n       \
-        \ for k, v in workflowjson.items():\n            if isinstance(v, dict) and\
-        \ v.get(\"class_type\",\"\").lower().find(\"lora stacker\") != -1:\n     \
-        \           return k\n        return None\n\n    def safe_set(node_id, key,\
-        \ value):\n        n = get(node_id)\n        if n and \"inputs\" in n:\n \
-        \           n[\"inputs\"][key] = value\n\n    # стиль / модель / seed\n  \
-        \  safe_set(47, \"index\", int(0))\n    safe_set(11, \"lora_name\", \"None\"\
-        )\n    safe_set(11, \"vae_name\", \"Baked VAE\")\n    safe_set(11, \"ckpt_name\"\
-        , \"aozoraXLVpred_v01AlphaVpred.safetensors\")\n    safe_set(21, \"seed\"\
-        , random.randint(0, 2**32 - 1))\n\n    # LoRA Stacker: выключаем по умолчанию\
-        \ и гасим обязательные поля\n    ls_id = find_lora_stacker(\"49\")\n    if\
-        \ ls_id:\n        for i in (1,2):\n            workflowjson[ls_id][\"inputs\"\
-        ][f\"lora_name_{i}\"] = \"None\"\n            workflowjson[ls_id][\"inputs\"\
-        ][f\"model_str_{i}\"] = 0.0\n            workflowjson[ls_id][\"inputs\"][f\"\
-        clip_str_{i}\"]  = 0.0\n            workflowjson[ls_id][\"inputs\"][f\"lora_wt_{i}\"\
-        ]   = 0.0\n"
-    - name: config
-      description: Configure generation parameters
-      code: "def config(workflowjson, *args):\n    import random\n\n    def get(node_id):\n\
-        \        return workflowjson.get(str(node_id))\n\n    def find_lora_stacker(fallback_id=\"\
-        49\"):\n        n = workflowjson.get(str(fallback_id))\n        if n and n.get(\"\
-        class_type\",\"\").lower().find(\"lora\") != -1 and \"inputs\" in n:\n   \
-        \         return str(fallback_id)\n        for k, v in workflowjson.items():\n\
-        \            if isinstance(v, dict) and v.get(\"class_type\",\"\").lower().find(\"\
-        lora stacker\") != -1:\n                return k\n        return None\n\n\
-        \    def safe_set(node_id, key, value):\n        n = get(node_id)\n      \
-        \  if n and \"inputs\" in n:\n            n[\"inputs\"][key] = value\n\n \
-        \   params = {}\n    for arg in args:\n        if '=' in arg:\n          \
-        \  key, value = arg.split('=', 1)\n            params[key.strip()] = value.strip()\n\
-        \n    # style\n    safe_set(47, \"index\", int(params.get(\"style\", 0)))\n\
-        \n    # seed\n    if \"seed\" in params:\n        safe_set(21, \"seed\", int(params[\"\
-        seed\"]))\n    else:\n        safe_set(21, \"seed\", random.randint(0, 2**32\
-        \ - 1))\n\n    # model\n    if \"model\" in params:\n        model_name =\
-        \ params[\"model\"]\n        if not model_name.endswith('.safetensors'):\n\
-        \            model_name += '.safetensors'\n        safe_set(11, \"ckpt_name\"\
-        , model_name)\n        safe_set(11, \"vae_name\", \"Baked VAE\")\n       \
-        \ # здесь у тебя всегда None — оставим так, т.к. LoRA переключаем отдельно\n\
-        \        safe_set(11, \"lora_name\", \"None\")\n    else:\n        safe_set(11,\
-        \ \"lora_name\", \"None\")\n        safe_set(11, \"vae_name\", \"Baked VAE\"\
-        )\n        safe_set(11, \"ckpt_name\", \"aozoraXLVpred_v01AlphaVpred.safetensors\"\
-        )\n\n    # lora → через LoRA Stacker (если есть)\n    ls_id = find_lora_stacker(\"\
-        49\")\n    def apply_lora_stack(name_or_none):\n        if not ls_id:\n  \
-        \          return\n        for i in (1,2):\n            workflowjson[ls_id][\"\
-        inputs\"][f\"lora_name_{i}\"] = name_or_none\n            # гасим обязательные\
-        \ поля — если нужно влияние, поменяешь с 0.0\n            workflowjson[ls_id][\"\
-        inputs\"][f\"model_str_{i}\"] = 0.0\n            workflowjson[ls_id][\"inputs\"\
-        ][f\"clip_str_{i}\"]  = 0.0\n            workflowjson[ls_id][\"inputs\"][f\"\
-        lora_wt_{i}\"]   = 0.0\n\n    if \"lora\" in params:\n        lora_name =\
-        \ params[\"lora\"]\n        if not lora_name.endswith('.safetensors'):\n \
-        \           lora_name += '.safetensors'\n        if lora_name.startswith(\"\
-        samekosaba\"):\n            apply_lora_stack(\"samekosaba.safetensors\")\n\
-        \            if ls_id:\n                workflowjson[ls_id][\"inputs\"][\"\
-        lora_name_2\"] = \"samekosaba2.safetensors\"\n        else:\n            apply_lora_stack(lora_name)\n\
-        \    else:\n        apply_lora_stack(\"None\")\n"
+      - name: __before
+        description: Will change steps for this workflow to the number provided in parenthesis
+        code: |
+          def __before(workflowjson):
+              import random
+
+              def get(node_id):
+                  return workflowjson.get(str(node_id))
+
+              def find_lora_stacker(fallback_id="49"):
+                  n = workflowjson.get(str(fallback_id))
+                  if n and n.get("class_type", "").lower().find("lora") != -1 and "inputs" in n:
+                      return str(fallback_id)
+
+                  # поиск по class_type
+                  for k, v in workflowjson.items():
+                      if isinstance(v, dict) and v.get("class_type", "").lower().find("lora stacker") != -1:
+                          return k
+
+                  return None
+
+              def safe_set(node_id, key, value):
+                  n = get(node_id)
+                  if n and "inputs" in n:
+                      n["inputs"][key] = value
+
+              # стиль / модель / seed
+              safe_set(47, "index", int(0))
+              safe_set(11, "lora_name", "None")
+              safe_set(11, "vae_name", "Baked VAE")
+              safe_set(11, "ckpt_name", "aozoraXLVpred_v01AlphaVpred.safetensors")
+              safe_set(21, "seed", random.randint(0, 2**32 - 1))
+
+              # LoRA Stacker: выключаем по умолчанию и гасим обязательные поля
+              ls_id = find_lora_stacker("49")
+              if ls_id:
+                  for i in (1, 2):
+                      workflowjson[ls_id]["inputs"][f"lora_name_{i}"] = "None"
+                      workflowjson[ls_id]["inputs"][f"model_str_{i}"] = 0.0
+                      workflowjson[ls_id]["inputs"][f"clip_str_{i}"] = 0.0
+                      workflowjson[ls_id]["inputs"][f"lora_wt_{i}"] = 0.0
+      - name: config
+        description: Configure generation parameters
+        code: |
+          def config(workflowjson, *args):
+              import random
+
+              def get(node_id):
+                  return workflowjson.get(str(node_id))
+
+              def find_lora_stacker(fallback_id="49"):
+                  n = workflowjson.get(str(fallback_id))
+                  if n and n.get("class_type", "").lower().find("lora") != -1 and "inputs" in n:
+                      return str(fallback_id)
+
+                  for k, v in workflowjson.items():
+                      if isinstance(v, dict) and v.get("class_type", "").lower().find("lora stacker") != -1:
+                          return k
+
+                  return None
+
+              def safe_set(node_id, key, value):
+                  n = get(node_id)
+                  if n and "inputs" in n:
+                      n["inputs"][key] = value
+
+              params = {}
+              for arg in args:
+                  if "=" in arg:
+                      key, value = arg.split("=", 1)
+                      params[key.strip()] = value.strip()
+
+              # style
+              safe_set(47, "index", int(params.get("style", 0)))
+
+              # seed
+              if "seed" in params:
+                  safe_set(21, "seed", int(params["seed"]))
+              else:
+                  safe_set(21, "seed", random.randint(0, 2**32 - 1))
+
+              # model
+              if "model" in params:
+                  model_name = params["model"]
+                  if not model_name.endswith(".safetensors"):
+                      model_name += ".safetensors"
+
+                  safe_set(11, "ckpt_name", model_name)
+                  safe_set(11, "vae_name", "Baked VAE")
+                  # здесь у тебя всегда None — оставим так, т.к. LoRA переключаем отдельно
+                  safe_set(11, "lora_name", "None")
+              else:
+                  safe_set(11, "lora_name", "None")
+                  safe_set(11, "vae_name", "Baked VAE")
+                  safe_set(11, "ckpt_name", "aozoraXLVpred_v01AlphaVpred.safetensors")
+
+              # lora → через LoRA Stacker (если есть)
+              ls_id = find_lora_stacker("49")
+
+              def apply_lora_stack(name_or_none):
+                  if not ls_id:
+                      return
+
+                  for i in (1, 2):
+                      workflowjson[ls_id]["inputs"][f"lora_name_{i}"] = name_or_none
+                      # гасим обязательные поля — если нужно влияние, поменяешь с 0.0
+                      workflowjson[ls_id]["inputs"][f"model_str_{i}"] = 0.0
+                      workflowjson[ls_id]["inputs"][f"clip_str_{i}"] = 0.0
+                      workflowjson[ls_id]["inputs"][f"lora_wt_{i}"] = 0.0
+
+              if "lora" in params:
+                  lora_name = params["lora"]
+                  if not lora_name.endswith(".safetensors"):
+                      lora_name += ".safetensors"
+
+                  if lora_name.startswith("samekosaba"):
+                      apply_lora_stack("samekosaba.safetensors")
+                      if ls_id:
+                          workflowjson[ls_id]["inputs"]["lora_name_2"] = "samekosaba2.safetensors"
+                  else:
+                      apply_lora_stack(lora_name)
+              else:
+                  apply_lora_stack("None")
+
   ExpNEWlandscape:
     type: txt2img
     description: Workflow type 1.
     workflow: ./workflows/ExpNEWlandscape.json
-    text_prompt_node_id: '45'
+    text_prompt_node_id: 45
     default: true
     settings:
-    - name: __before
-      description: Will change steps for this workflow to the number provided in parenthesis
-      code: "def __before(workflowjson):\n    import random\n\n    def get(node_id):\n\
-        \        return workflowjson.get(str(node_id))\n\n    def find_lora_stacker(fallback_id=\"\
-        49\"):\n        n = workflowjson.get(str(fallback_id))\n        if n and n.get(\"\
-        class_type\",\"\").lower().find(\"lora\") != -1 and \"inputs\" in n:\n   \
-        \         return str(fallback_id)\n        # поиск по class_type\n       \
-        \ for k, v in workflowjson.items():\n            if isinstance(v, dict) and\
-        \ v.get(\"class_type\",\"\").lower().find(\"lora stacker\") != -1:\n     \
-        \           return k\n        return None\n\n    def safe_set(node_id, key,\
-        \ value):\n        n = get(node_id)\n        if n and \"inputs\" in n:\n \
-        \           n[\"inputs\"][key] = value\n\n    # стиль / модель / seed\n  \
-        \  safe_set(47, \"index\", int(0))\n    safe_set(11, \"lora_name\", \"None\"\
-        )\n    safe_set(11, \"vae_name\", \"Baked VAE\")\n    safe_set(11, \"ckpt_name\"\
-        , \"aozoraXLVpred_v01AlphaVpred.safetensors\")\n    safe_set(21, \"seed\"\
-        , random.randint(0, 2**32 - 1))\n\n    # LoRA Stacker: выключаем по умолчанию\
-        \ и гасим обязательные поля\n    ls_id = find_lora_stacker(\"49\")\n    if\
-        \ ls_id:\n        for i in (1,2):\n            workflowjson[ls_id][\"inputs\"\
-        ][f\"lora_name_{i}\"] = \"None\"\n            workflowjson[ls_id][\"inputs\"\
-        ][f\"model_str_{i}\"] = 0.0\n            workflowjson[ls_id][\"inputs\"][f\"\
-        clip_str_{i}\"]  = 0.0\n            workflowjson[ls_id][\"inputs\"][f\"lora_wt_{i}\"\
-        ]   = 0.0\n"
-    - name: config
-      description: Configure generation parameters
-      code: "def config(workflowjson, *args):\n    import random\n\n    def get(node_id):\n\
-        \        return workflowjson.get(str(node_id))\n\n    def find_lora_stacker(fallback_id=\"\
-        49\"):\n        n = workflowjson.get(str(fallback_id))\n        if n and n.get(\"\
-        class_type\",\"\").lower().find(\"lora\") != -1 and \"inputs\" in n:\n   \
-        \         return str(fallback_id)\n        for k, v in workflowjson.items():\n\
-        \            if isinstance(v, dict) and v.get(\"class_type\",\"\").lower().find(\"\
-        lora stacker\") != -1:\n                return k\n        return None\n\n\
-        \    def safe_set(node_id, key, value):\n        n = get(node_id)\n      \
-        \  if n and \"inputs\" in n:\n            n[\"inputs\"][key] = value\n\n \
-        \   params = {}\n    for arg in args:\n        if '=' in arg:\n          \
-        \  key, value = arg.split('=', 1)\n            params[key.strip()] = value.strip()\n\
-        \n    # style\n    safe_set(47, \"index\", int(params.get(\"style\", 0)))\n\
-        \n    # seed\n    if \"seed\" in params:\n        safe_set(21, \"seed\", int(params[\"\
-        seed\"]))\n    else:\n        safe_set(21, \"seed\", random.randint(0, 2**32\
-        \ - 1))\n\n    # model\n    if \"model\" in params:\n        model_name =\
-        \ params[\"model\"]\n        if not model_name.endswith('.safetensors'):\n\
-        \            model_name += '.safetensors'\n        safe_set(11, \"ckpt_name\"\
-        , model_name)\n        safe_set(11, \"vae_name\", \"Baked VAE\")\n       \
-        \ # здесь у тебя всегда None — оставим так, т.к. LoRA переключаем отдельно\n\
-        \        safe_set(11, \"lora_name\", \"None\")\n    else:\n        safe_set(11,\
-        \ \"lora_name\", \"None\")\n        safe_set(11, \"vae_name\", \"Baked VAE\"\
-        )\n        safe_set(11, \"ckpt_name\", \"aozoraXLVpred_v01AlphaVpred.safetensors\"\
-        )\n\n    # lora → через LoRA Stacker (если есть)\n    ls_id = find_lora_stacker(\"\
-        49\")\n    def apply_lora_stack(name_or_none):\n        if not ls_id:\n  \
-        \          return\n        for i in (1,2):\n            workflowjson[ls_id][\"\
-        inputs\"][f\"lora_name_{i}\"] = name_or_none\n            # гасим обязательные\
-        \ поля — если нужно влияние, поменяешь с 0.0\n            workflowjson[ls_id][\"\
-        inputs\"][f\"model_str_{i}\"] = 0.0\n            workflowjson[ls_id][\"inputs\"\
-        ][f\"clip_str_{i}\"]  = 0.0\n            workflowjson[ls_id][\"inputs\"][f\"\
-        lora_wt_{i}\"]   = 0.0\n\n    if \"lora\" in params:\n        lora_name =\
-        \ params[\"lora\"]\n        if not lora_name.endswith('.safetensors'):\n \
-        \           lora_name += '.safetensors'\n        if lora_name.startswith(\"\
-        samekosaba\"):\n            apply_lora_stack(\"samekosaba.safetensors\")\n\
-        \            if ls_id:\n                workflowjson[ls_id][\"inputs\"][\"\
-        lora_name_2\"] = \"samekosaba2.safetensors\"\n        else:\n            apply_lora_stack(lora_name)\n\
-        \    else:\n        apply_lora_stack(\"None\")\n"
+      - name: __before
+        description: Will change steps for this workflow to the number provided in parenthesis
+        code: |
+          def __before(workflowjson):
+              import random
+
+              def get(node_id):
+                  return workflowjson.get(str(node_id))
+
+              def find_lora_stacker(fallback_id="49"):
+                  n = workflowjson.get(str(fallback_id))
+                  if n and n.get("class_type", "").lower().find("lora") != -1 and "inputs" in n:
+                      return str(fallback_id)
+
+                  # поиск по class_type
+                  for k, v in workflowjson.items():
+                      if isinstance(v, dict) and v.get("class_type", "").lower().find("lora stacker") != -1:
+                          return k
+
+                  return None
+
+              def safe_set(node_id, key, value):
+                  n = get(node_id)
+                  if n and "inputs" in n:
+                      n["inputs"][key] = value
+
+              # стиль / модель / seed
+              safe_set(47, "index", int(0))
+              safe_set(11, "lora_name", "None")
+              safe_set(11, "vae_name", "Baked VAE")
+              safe_set(11, "ckpt_name", "aozoraXLVpred_v01AlphaVpred.safetensors")
+              safe_set(21, "seed", random.randint(0, 2**32 - 1))
+
+              # LoRA Stacker: выключаем по умолчанию и гасим обязательные поля
+              ls_id = find_lora_stacker("49")
+              if ls_id:
+                  for i in (1, 2):
+                      workflowjson[ls_id]["inputs"][f"lora_name_{i}"] = "None"
+                      workflowjson[ls_id]["inputs"][f"model_str_{i}"] = 0.0
+                      workflowjson[ls_id]["inputs"][f"clip_str_{i}"] = 0.0
+                      workflowjson[ls_id]["inputs"][f"lora_wt_{i}"] = 0.0
+      - name: config
+        description: Configure generation parameters
+        code: |
+          def config(workflowjson, *args):
+              import random
+
+              def get(node_id):
+                  return workflowjson.get(str(node_id))
+
+              def find_lora_stacker(fallback_id="49"):
+                  n = workflowjson.get(str(fallback_id))
+                  if n and n.get("class_type", "").lower().find("lora") != -1 and "inputs" in n:
+                      return str(fallback_id)
+
+                  for k, v in workflowjson.items():
+                      if isinstance(v, dict) and v.get("class_type", "").lower().find("lora stacker") != -1:
+                          return k
+
+                  return None
+
+              def safe_set(node_id, key, value):
+                  n = get(node_id)
+                  if n and "inputs" in n:
+                      n["inputs"][key] = value
+
+              params = {}
+              for arg in args:
+                  if "=" in arg:
+                      key, value = arg.split("=", 1)
+                      params[key.strip()] = value.strip()
+
+              # style
+              safe_set(47, "index", int(params.get("style", 0)))
+
+              # seed
+              if "seed" in params:
+                  safe_set(21, "seed", int(params["seed"]))
+              else:
+                  safe_set(21, "seed", random.randint(0, 2**32 - 1))
+
+              # model
+              if "model" in params:
+                  model_name = params["model"]
+                  if not model_name.endswith(".safetensors"):
+                      model_name += ".safetensors"
+
+                  safe_set(11, "ckpt_name", model_name)
+                  safe_set(11, "vae_name", "Baked VAE")
+                  # здесь у тебя всегда None — оставим так, т.к. LoRA переключаем отдельно
+                  safe_set(11, "lora_name", "None")
+              else:
+                  safe_set(11, "lora_name", "None")
+                  safe_set(11, "vae_name", "Baked VAE")
+                  safe_set(11, "ckpt_name", "aozoraXLVpred_v01AlphaVpred.safetensors")
+
+              # lora → через LoRA Stacker (если есть)
+              ls_id = find_lora_stacker("49")
+
+              def apply_lora_stack(name_or_none):
+                  if not ls_id:
+                      return
+
+                  for i in (1, 2):
+                      workflowjson[ls_id]["inputs"][f"lora_name_{i}"] = name_or_none
+                      # гасим обязательные поля — если нужно влияние, поменяешь с 0.0
+                      workflowjson[ls_id]["inputs"][f"model_str_{i}"] = 0.0
+                      workflowjson[ls_id]["inputs"][f"clip_str_{i}"] = 0.0
+                      workflowjson[ls_id]["inputs"][f"lora_wt_{i}"] = 0.0
+
+              if "lora" in params:
+                  lora_name = params["lora"]
+                  if not lora_name.endswith(".safetensors"):
+                      lora_name += ".safetensors"
+
+                  if lora_name.startswith("samekosaba"):
+                      apply_lora_stack("samekosaba.safetensors")
+                      if ls_id:
+                          workflowjson[ls_id]["inputs"]["lora_name_2"] = "samekosaba2.safetensors"
+                  else:
+                      apply_lora_stack(lora_name)
+              else:
+                  apply_lora_stack("None")
+
   forge:
     type: txt2img
     description: Workflow type 3. Fast workflow. Clean model, no upscale.
     workflow: ./workflows/forgeNEW.json
-    text_prompt_node_id: '36'
+    text_prompt_node_id: 36
     default: true
     settings:
-    - name: __before
-      description: Will change steps for this workflow to the number provided in parenthesis
-      code: "def __before(workflowjson):\n    import random\n\n    def get(node_id):\
-        \ return workflowjson.get(str(node_id))\n    def safe_set(node_id, key, value):\n\
-        \        n = get(node_id)\n        if n and \"inputs\" in n:\n           \
-        \ n[\"inputs\"][key] = value\n\n    # индексы и дефолты\n    safe_set(43,\
-        \ \"index\", int(0))\n    # LoRA Stacker (если это он под id 45), погасим\
-        \ обязательные поля\n    n45 = get(45)\n    if n45 and \"inputs\" in n45:\n\
-        \        for i in (1,2):\n            n45[\"inputs\"][f\"lora_name_{i}\"]\
-        \ = \"None\"\n            n45[\"inputs\"][f\"model_str_{i}\"] = 0.0\n    \
-        \        n45[\"inputs\"][f\"clip_str_{i}\"]  = 0.0\n            n45[\"inputs\"\
-        ][f\"lora_wt_{i}\"]   = 0.0\n\n    safe_set(46, \"lora_name\", \"nyalia.safetensors\"\
-        )  # обычная LoRA-нода\n    safe_set(11, \"lora_name\", \"nyalia.safetensors\"\
-        )\n    safe_set(11, \"vae_name\", \"Baked VAE\")\n    safe_set(11, \"ckpt_name\"\
-        , \"noobai10.safetensors\")\n    safe_set(40, \"model_name\", \"noobai10.safetensors\"\
-        )\n    safe_set(21, \"seed\", random.randint(0, 2**32 - 1))\n"
-    - name: config
-      description: Configure generation parameters
-      code: "def config(workflowjson, *args):\n    import random\n\n    def get(node_id):\
-        \ return workflowjson.get(str(node_id))\n    def safe_set(node_id, key, value):\n\
-        \        n = get(node_id)\n        if n and \"inputs\" in n:\n           \
-        \ n[\"inputs\"][key] = value\n\n    params = {}\n    for arg in args:\n  \
-        \      if '=' in arg:\n            key, value = arg.split('=', 1)\n      \
-        \      params[key.strip()] = value.strip()\n\n    safe_set(43, \"index\",\
-        \ int(params.get(\"style\", 0)))\n\n    if \"seed\" in params:\n        safe_set(21,\
-        \ \"seed\", int(params[\"seed\"]))\n    else:\n        safe_set(21, \"seed\"\
-        , random.randint(0, 2**32 - 1))\n\n    if \"model\" in params:\n        model_name\
-        \ = params[\"model\"]\n        if not model_name.endswith('.safetensors'):\n\
-        \            model_name += '.safetensors'\n        safe_set(11, \"ckpt_name\"\
-        , model_name)\n        safe_set(40, \"model_name\", model_name)\n        safe_set(11,\
-        \ \"vae_name\", \"Baked VAE\")\n        # по умолчанию используем nyalia через\
-        \ обычную LoRA-ноду\n        safe_set(11, \"lora_name\", \"nyalia.safetensors\"\
-        )\n    else:\n        safe_set(11, \"lora_name\", \"nyalia.safetensors\")\n\
-        \        safe_set(11, \"vae_name\", \"Baked VAE\")\n        safe_set(11, \"\
-        ckpt_name\", \"noobai10.safetensors\")\n        safe_set(40, \"model_name\"\
-        , \"noobai10.safetensors\")\n\n    def apply_stack_45(name_or_none):\n   \
-        \     n = get(45)\n        if not (n and \"inputs\" in n):\n            return\n\
-        \        for i in (1,2):\n            n[\"inputs\"][f\"lora_name_{i}\"] =\
-        \ name_or_none\n            n[\"inputs\"][f\"model_str_{i}\"] = 0.0\n    \
-        \        n[\"inputs\"][f\"clip_str_{i}\"]  = 0.0\n            n[\"inputs\"\
-        ][f\"lora_wt_{i}\"]   = 0.0\n\n    if \"lora\" in params:\n        lora_name\
-        \ = params[\"lora\"]\n        if not lora_name.endswith('.safetensors'):\n\
-        \            lora_name += '.safetensors'\n\n        apply_stack_45(lora_name)\n\
-        \        safe_set(46, \"lora_name\", lora_name)\n\n        if lora_name.startswith(\"\
-        samekosaba\"):\n            apply_stack_45(\"samekosaba.safetensors\")\n \
-        \           n = get(45)\n            if n:\n                n[\"inputs\"][\"\
-        lora_name_2\"] = \"samekosaba2.safetensors\"\n            safe_set(46, \"\
-        lora_name\", \"samekosaba.safetensors\")\n    else:\n        apply_stack_45(\"\
-        None\")\n        safe_set(46, \"lora_name\", \"nyalia.safetensors\")\n"
+      - name: __before
+        description: Will change steps for this workflow to the number provided in parenthesis
+        code: |
+          def __before(workflowjson):
+              import random
+
+              def get(node_id):
+                  return workflowjson.get(str(node_id))
+
+              def safe_set(node_id, key, value):
+                  n = get(node_id)
+                  if n and "inputs" in n:
+                      n["inputs"][key] = value
+
+              # индексы и дефолты
+              safe_set(43, "index", int(0))
+
+              # LoRA Stacker (если это он под id 45), погасим обязательные поля
+              n45 = get(45)
+              if n45 and "inputs" in n45:
+                  for i in (1, 2):
+                      n45["inputs"][f"lora_name_{i}"] = "None"
+                      n45["inputs"][f"model_str_{i}"] = 0.0
+                      n45["inputs"][f"clip_str_{i}"] = 0.0
+                      n45["inputs"][f"lora_wt_{i}"] = 0.0
+
+              safe_set(46, "lora_name", "nyalia.safetensors")  # обычная LoRA-нода
+              safe_set(11, "lora_name", "nyalia.safetensors")
+              safe_set(11, "vae_name", "Baked VAE")
+              safe_set(11, "ckpt_name", "noobai10.safetensors")
+              safe_set(40, "model_name", "noobai10.safetensors")
+              safe_set(21, "seed", random.randint(0, 2**32 - 1))
+      - name: config
+        description: Configure generation parameters
+        code: |
+          def config(workflowjson, *args):
+              import random
+
+              def get(node_id):
+                  return workflowjson.get(str(node_id))
+
+              def safe_set(node_id, key, value):
+                  n = get(node_id)
+                  if n and "inputs" in n:
+                      n["inputs"][key] = value
+
+              params = {}
+              for arg in args:
+                  if "=" in arg:
+                      key, value = arg.split("=", 1)
+                      params[key.strip()] = value.strip()
+
+              safe_set(43, "index", int(params.get("style", 0)))
+
+              if "seed" in params:
+                  safe_set(21, "seed", int(params["seed"]))
+              else:
+                  safe_set(21, "seed", random.randint(0, 2**32 - 1))
+
+              if "model" in params:
+                  model_name = params["model"]
+                  if not model_name.endswith(".safetensors"):
+                      model_name += ".safetensors"
+
+                  safe_set(11, "ckpt_name", model_name)
+                  safe_set(40, "model_name", model_name)
+                  safe_set(11, "vae_name", "Baked VAE")
+                  # по умолчанию используем nyalia через обычную LoRA-ноду
+                  safe_set(11, "lora_name", "nyalia.safetensors")
+              else:
+                  safe_set(11, "lora_name", "nyalia.safetensors")
+                  safe_set(11, "vae_name", "Baked VAE")
+                  safe_set(11, "ckpt_name", "noobai10.safetensors")
+                  safe_set(40, "model_name", "noobai10.safetensors")
+
+              def apply_stack_45(name_or_none):
+                  n = get(45)
+                  if not (n and "inputs" in n):
+                      return
+
+                  for i in (1, 2):
+                      n["inputs"][f"lora_name_{i}"] = name_or_none
+                      n["inputs"][f"model_str_{i}"] = 0.0
+                      n["inputs"][f"clip_str_{i}"] = 0.0
+                      n["inputs"][f"lora_wt_{i}"] = 0.0
+
+              if "lora" in params:
+                  lora_name = params["lora"]
+                  if not lora_name.endswith(".safetensors"):
+                      lora_name += ".safetensors"
+
+                  apply_stack_45(lora_name)
+                  safe_set(46, "lora_name", lora_name)
+
+                  if lora_name.startswith("samekosaba"):
+                      apply_stack_45("samekosaba.safetensors")
+                      n = get(45)
+                      if n:
+                          n["inputs"]["lora_name_2"] = "samekosaba2.safetensors"
+                      safe_set(46, "lora_name", "samekosaba.safetensors")
+              else:
+                  apply_stack_45(None)
+                  safe_set(46, "lora_name", "nyalia.safetensors")
+
   forgelandscape:
     type: txt2img
     description: Workflow type 3. Fast workflow. Clean model, no upscale.
     workflow: ./workflows/forgeNEWlandscape.json
-    text_prompt_node_id: '36'
+    text_prompt_node_id: 36
     default: true
     settings:
-    - name: __before
-      description: Will change steps for this workflow to the number provided in parenthesis
-      code: "def __before(workflowjson):\n    import random\n\n    def get(node_id):\
-        \ return workflowjson.get(str(node_id))\n    def safe_set(node_id, key, value):\n\
-        \        n = get(node_id)\n        if n and \"inputs\" in n:\n           \
-        \ n[\"inputs\"][key] = value\n\n    # индексы и дефолты\n    safe_set(43,\
-        \ \"index\", int(0))\n    # LoRA Stacker (если это он под id 45), погасим\
-        \ обязательные поля\n    n45 = get(45)\n    if n45 and \"inputs\" in n45:\n\
-        \        for i in (1,2):\n            n45[\"inputs\"][f\"lora_name_{i}\"]\
-        \ = \"None\"\n            n45[\"inputs\"][f\"model_str_{i}\"] = 0.0\n    \
-        \        n45[\"inputs\"][f\"clip_str_{i}\"]  = 0.0\n            n45[\"inputs\"\
-        ][f\"lora_wt_{i}\"]   = 0.0\n\n    safe_set(46, \"lora_name\", \"nyalia.safetensors\"\
-        )  # обычная LoRA-нода\n    safe_set(11, \"lora_name\", \"nyalia.safetensors\"\
-        )\n    safe_set(11, \"vae_name\", \"Baked VAE\")\n    safe_set(11, \"ckpt_name\"\
-        , \"noobai10.safetensors\")\n    safe_set(40, \"model_name\", \"noobai10.safetensors\"\
-        )\n    safe_set(21, \"seed\", random.randint(0, 2**32 - 1))\n"
-    - name: config
-      description: Configure generation parameters
-      code: "def config(workflowjson, *args):\n    import random\n\n    def get(node_id):\
-        \ return workflowjson.get(str(node_id))\n    def safe_set(node_id, key, value):\n\
-        \        n = get(node_id)\n        if n and \"inputs\" in n:\n           \
-        \ n[\"inputs\"][key] = value\n\n    params = {}\n    for arg in args:\n  \
-        \      if '=' in arg:\n            key, value = arg.split('=', 1)\n      \
-        \      params[key.strip()] = value.strip()\n\n    safe_set(43, \"index\",\
-        \ int(params.get(\"style\", 0)))\n\n    if \"seed\" in params:\n        safe_set(21,\
-        \ \"seed\", int(params[\"seed\"]))\n    else:\n        safe_set(21, \"seed\"\
-        , random.randint(0, 2**32 - 1))\n\n    if \"model\" in params:\n        model_name\
-        \ = params[\"model\"]\n        if not model_name.endswith('.safetensors'):\n\
-        \            model_name += '.safetensors'\n        safe_set(11, \"ckpt_name\"\
-        , model_name)\n        safe_set(40, \"model_name\", model_name)\n        safe_set(11,\
-        \ \"vae_name\", \"Baked VAE\")\n        # по умолчанию используем nyalia через\
-        \ обычную LoRA-ноду\n        safe_set(11, \"lora_name\", \"nyalia.safetensors\"\
-        )\n    else:\n        safe_set(11, \"lora_name\", \"nyalia.safetensors\")\n\
-        \        safe_set(11, \"vae_name\", \"Baked VAE\")\n        safe_set(11, \"\
-        ckpt_name\", \"noobai10.safetensors\")\n        safe_set(40, \"model_name\"\
-        , \"noobai10.safetensors\")\n\n    def apply_stack_45(name_or_none):\n   \
-        \     n = get(45)\n        if not (n and \"inputs\" in n):\n            return\n\
-        \        for i in (1,2):\n            n[\"inputs\"][f\"lora_name_{i}\"] =\
-        \ name_or_none\n            n[\"inputs\"][f\"model_str_{i}\"] = 0.0\n    \
-        \        n[\"inputs\"][f\"clip_str_{i}\"]  = 0.0\n            n[\"inputs\"\
-        ][f\"lora_wt_{i}\"]   = 0.0\n\n    if \"lora\" in params:\n        lora_name\
-        \ = params[\"lora\"]\n        if not lora_name.endswith('.safetensors'):\n\
-        \            lora_name += '.safetensors'\n\n        apply_stack_45(lora_name)\n\
-        \        safe_set(46, \"lora_name\", lora_name)\n\n        if lora_name.startswith(\"\
-        samekosaba\"):\n            apply_stack_45(\"samekosaba.safetensors\")\n \
-        \           n = get(45)\n            if n:\n                n[\"inputs\"][\"\
-        lora_name_2\"] = \"samekosaba2.safetensors\"\n            safe_set(46, \"\
-        lora_name\", \"samekosaba.safetensors\")\n    else:\n        apply_stack_45(\"\
-        None\")\n        safe_set(46, \"lora_name\", \"nyalia.safetensors\")\n"
+      - name: __before
+        description: Will change steps for this workflow to the number provided in parenthesis
+        code: |
+          def __before(workflowjson):
+              import random
+
+              def get(node_id):
+                  return workflowjson.get(str(node_id))
+
+              def safe_set(node_id, key, value):
+                  n = get(node_id)
+                  if n and "inputs" in n:
+                      n["inputs"][key] = value
+
+              # индексы и дефолты
+              safe_set(43, "index", int(0))
+
+              # LoRA Stacker (если это он под id 45), погасим обязательные поля
+              n45 = get(45)
+              if n45 and "inputs" in n45:
+                  for i in (1, 2):
+                      n45["inputs"][f"lora_name_{i}"] = "None"
+                      n45["inputs"][f"model_str_{i}"] = 0.0
+                      n45["inputs"][f"clip_str_{i}"] = 0.0
+                      n45["inputs"][f"lora_wt_{i}"] = 0.0
+
+              safe_set(46, "lora_name", "nyalia.safetensors")  # обычная LoRA-нода
+              safe_set(11, "lora_name", "nyalia.safetensors")
+              safe_set(11, "vae_name", "Baked VAE")
+              safe_set(11, "ckpt_name", "noobai10.safetensors")
+              safe_set(40, "model_name", "noobai10.safetensors")
+              safe_set(21, "seed", random.randint(0, 2**32 - 1))
+      - name: config
+        description: Configure generation parameters
+        code: |
+          def config(workflowjson, *args):
+              import random
+
+              def get(node_id):
+                  return workflowjson.get(str(node_id))
+
+              def safe_set(node_id, key, value):
+                  n = get(node_id)
+                  if n and "inputs" in n:
+                      n["inputs"][key] = value
+
+              params = {}
+              for arg in args:
+                  if "=" in arg:
+                      key, value = arg.split("=", 1)
+                      params[key.strip()] = value.strip()
+
+              safe_set(43, "index", int(params.get("style", 0)))
+
+              if "seed" in params:
+                  safe_set(21, "seed", int(params["seed"]))
+              else:
+                  safe_set(21, "seed", random.randint(0, 2**32 - 1))
+
+              if "model" in params:
+                  model_name = params["model"]
+                  if not model_name.endswith(".safetensors"):
+                      model_name += ".safetensors"
+
+                  safe_set(11, "ckpt_name", model_name)
+                  safe_set(40, "model_name", model_name)
+                  safe_set(11, "vae_name", "Baked VAE")
+                  # по умолчанию используем nyalia через обычную LoRA-ноду
+                  safe_set(11, "lora_name", "nyalia.safetensors")
+              else:
+                  safe_set(11, "lora_name", "nyalia.safetensors")
+                  safe_set(11, "vae_name", "Baked VAE")
+                  safe_set(11, "ckpt_name", "noobai10.safetensors")
+                  safe_set(40, "model_name", "noobai10.safetensors")
+
+              def apply_stack_45(name_or_none):
+                  n = get(45)
+                  if not (n and "inputs" in n):
+                      return
+
+                  for i in (1, 2):
+                      n["inputs"][f"lora_name_{i}"] = name_or_none
+                      n["inputs"][f"model_str_{i}"] = 0.0
+                      n["inputs"][f"clip_str_{i}"] = 0.0
+                      n["inputs"][f"lora_wt_{i}"] = 0.0
+
+              if "lora" in params:
+                  lora_name = params["lora"]
+                  if not lora_name.endswith(".safetensors"):
+                      lora_name += ".safetensors"
+
+                  apply_stack_45(lora_name)
+                  safe_set(46, "lora_name", lora_name)
+
+                  if lora_name.startswith("samekosaba"):
+                      apply_stack_45("samekosaba.safetensors")
+                      n = get(45)
+                      if n:
+                          n["inputs"]["lora_name_2"] = "samekosaba2.safetensors"
+                      safe_set(46, "lora_name", "samekosaba.safetensors")
+              else:
+                  apply_stack_45(None)
+                  safe_set(46, "lora_name", "nyalia.safetensors")
+
 security:
   access_guild_id: 1305851922644992080
   supporter_role_id: 1361296590777745560
