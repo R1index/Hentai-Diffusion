@@ -1,7 +1,7 @@
 import json
 import uuid
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Tuple
 
 import yaml
 
@@ -14,6 +14,9 @@ class WorkflowManager:
         self.config = self._load_config(config_path)
         self.workflows = self.config['workflows']
         self.default_workflow = self.config.get('default_workflow')
+        self._resolution_presets: List[Tuple[str, str]] = self._parse_resolution_presets(
+            self.config.get('resolutions')
+        )
 
         # Get ComfyUI input directory from config
         self.input_dir = Path(self.config.get('comfyui', {}).get('input_dir', 'input'))
@@ -25,6 +28,39 @@ class WorkflowManager:
         # Ensure input directory exists
         self.input_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Using ComfyUI input directory: {self.input_dir}")
+
+    def _parse_resolution_presets(self, raw_presets: Optional[list]) -> List[Tuple[str, str]]:
+        presets: List[Tuple[str, str]] = []
+        if not raw_presets:
+            return presets
+
+        for item in raw_presets:
+            if isinstance(item, dict):
+                value = item.get('value') or item.get('label') or item.get('name')
+                label = item.get('label') or item.get('name') or value
+            else:
+                value = item
+                label = item
+
+            if not value:
+                continue
+
+            presets.append((str(label), str(value)))
+
+        return presets
+
+    def get_resolution_presets(self) -> List[Tuple[str, str]]:
+        """Return configured resolution presets as (label, value) tuples."""
+
+        return list(self._resolution_presets)
+
+    def is_resolution_allowed(self, resolution: str) -> bool:
+        """Return True if resolution is in configured presets or presets are not set."""
+
+        if not self._resolution_presets:
+            return True
+
+        return any(value == resolution for _, value in self._resolution_presets)
 
     def update_workflow_nodes(self, workflow_json: dict, workflow_config: dict,
                               prompt: str = None, image_data: bytes = None) -> dict:
@@ -190,8 +226,50 @@ class WorkflowManager:
             logger.error(f"Error applying settings: {e}")
             return workflow_json
 
+    def apply_resolution(self, workflow_json: dict, workflow_config: dict, workflow_name: str,
+                         resolution: Optional[str]) -> dict:
+        """Apply the selected resolution to the workflow if supported."""
+
+        if not resolution:
+            return workflow_json
+
+        node_id = workflow_config.get('resolution_node_id')
+        if node_id is None:
+            logger.debug(
+                "Workflow '%s' does not define 'resolution_node_id'; skipping resolution override",
+                workflow_name,
+            )
+            return workflow_json
+
+        node_key = str(node_id)
+        node = workflow_json.get(node_key)
+        if not node:
+            logger.warning(
+                "Resolution node '%s' not found in workflow '%s'",
+                node_key,
+                workflow_name,
+            )
+            return workflow_json
+
+        inputs = node.setdefault('inputs', {})
+        if not self.is_resolution_allowed(resolution):
+            logger.debug(
+                "Resolution '%s' is not in configured presets; applying regardless",
+                resolution,
+            )
+
+        inputs['resolution'] = resolution
+        logger.debug(
+            "Applied resolution '%s' to node '%s' in workflow '%s'",
+            resolution,
+            node_key,
+            workflow_name,
+        )
+        return workflow_json
+
     def prepare_workflow(self, workflow_name: str, prompt: str = None,
                          settings: Optional[str] = None,
+                         resolution: Optional[str] = None,
                          image_data: Optional[bytes] = None) -> dict:
         """Prepare a workflow with prompt, settings, and image data"""
         try:
@@ -208,6 +286,14 @@ class WorkflowManager:
                 workflow_config,
                 prompt,
                 image_data
+            )
+
+            # Apply resolution override if requested
+            workflow_json = self.apply_resolution(
+                workflow_json,
+                workflow_config,
+                workflow_name,
+                resolution,
             )
 
             # Apply settings
