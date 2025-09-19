@@ -161,10 +161,10 @@ def workflows_command(bot):
         if embed.fields:
             embeds.append(embed)
 
-        # Отправляем первый ответ
+        # Send the first response
         await interaction.response.send_message(embed=embeds[0])
 
-        # Отправляем оставшиеся вложения
+        # Send the remaining embeds
         for embed in embeds[1:]:
             await interaction.followup.send(embed=embed)
 
@@ -176,7 +176,7 @@ def profile_command(bot):
 
     @app_commands.command(
         name="profile",
-        description="Показать статистику генераций и статус спонсорства",
+        description="Show your generation stats and sponsorship status",
     )
     async def profile(interaction: discord.Interaction) -> None:
         user_id = str(interaction.user.id)
@@ -187,18 +187,18 @@ def profile_command(bot):
 
         status_details = []
         if listed_donor:
-            status_details.append("в списке доноров")
+            status_details.append("listed as donor")
         if supporter_role:
-            status_details.append("есть роль поддержки")
+            status_details.append("has supporter role")
 
         if status_details:
-            sponsorship_status = f"💎 Активен ({', '.join(status_details)})"
+            sponsorship_status = f"💎 Active ({', '.join(status_details)})"
         else:
-            sponsorship_status = "🪙 Не активен"
+            sponsorship_status = "🪙 Inactive"
 
         embed = discord.Embed(
-            title="👤 Профиль пользователя",
-            description=f"Статистика для {interaction.user.mention}",
+            title="👤 User Profile",
+            description=f"Stats for {interaction.user.mention}",
             color=0x5865F2,
         )
 
@@ -206,13 +206,13 @@ def profile_command(bot):
             embed.set_thumbnail(url=interaction.user.display_avatar.url)
 
         stats_lines = [
-            f"Сегодня: **{stats['day']}**",
-            f"7 дней: **{stats['week']}**",
-            f"30 дней: **{stats['month']}**",
-            f"Всего: **{stats['total']}**",
+            f"Today: **{stats['day']}**",
+            f"7 days: **{stats['week']}**",
+            f"30 days: **{stats['month']}**",
+            f"All time: **{stats['total']}**",
         ]
-        embed.add_field(name="📈 Генерации", value="\n".join(stats_lines), inline=False)
-        embed.add_field(name="💖 Спонсорство", value=sponsorship_status, inline=False)
+        embed.add_field(name="📈 Generations", value="\n".join(stats_lines), inline=False)
+        embed.add_field(name="💖 Sponsorship", value=sponsorship_status, inline=False)
         embed.set_footer(text="Support us ❤️ boosty.to/rindex")
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
