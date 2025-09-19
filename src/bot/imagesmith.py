@@ -41,6 +41,7 @@ class GenerationContext:
     is_donor: bool
     prompt: Optional[str] = None
     settings: Optional[str] = None
+    resolution: Optional[str] = None
     started_at: float = field(default_factory=time.time)
     workflow_name: Optional[str] = None
     message: Optional[discord.Message] = None
@@ -510,6 +511,7 @@ class ComfyUIBot(commands.Bot):
         prompt: str,
         workflow: Optional[str] = None,
         settings: Optional[str] = None,
+        resolution: Optional[str] = None,
         input_image: Optional[discord.Attachment] = None,
     ) -> None:
         user_id = str(interaction.user.id)
@@ -524,10 +526,11 @@ class ComfyUIBot(commands.Bot):
             return
 
         logger.info(
-            "gen[%s] request received • type=%s workflow=%s",
+            "gen[%s] request received • type=%s workflow=%s resolution=%s",
             user_id,
             workflow_type,
             workflow or "default",
+            resolution or "default",
         )
 
         is_supporter = await self._has_unlimited_access(interaction)
@@ -540,6 +543,7 @@ class ComfyUIBot(commands.Bot):
             is_donor=is_donor,
             prompt=prompt,
             settings=settings,
+            resolution=resolution,
         )
 
         try:
@@ -572,6 +576,7 @@ class ComfyUIBot(commands.Bot):
                 prompt,
                 workflow,
                 settings,
+                resolution,
                 input_image,
                 context,
             )
@@ -589,6 +594,7 @@ class ComfyUIBot(commands.Bot):
         prompt: str,
         workflow: Optional[str],
         settings: Optional[str],
+        resolution: Optional[str],
         input_image: Optional[discord.Attachment],
         context: GenerationContext,
     ) -> None:
@@ -596,6 +602,10 @@ class ComfyUIBot(commands.Bot):
         context.workflow_name = workflow_name
 
         workflow_config = self.workflow_manager.get_workflow(workflow_name)
+        if resolution:
+            context.resolution = resolution
+        elif not context.resolution:
+            context.resolution = workflow_config.get("default_resolution")
         security_results = await self.hook_manager.execute_hook(
             "is.security",
             interaction,
@@ -679,6 +689,7 @@ class ComfyUIBot(commands.Bot):
             workflow_type,
             prompt,
             settings,
+            context.resolution,
             image_data,
         )
     async def _run_generation_pipeline(
@@ -688,12 +699,15 @@ class ComfyUIBot(commands.Bot):
         workflow_type: str,
         prompt: Optional[str],
         settings: Optional[str],
+        resolution: Optional[str],
         image_data: Optional[bytes],
     ) -> None:
         start_ts = time.time()
         context.workflow_name = workflow_name
         context.prompt = prompt
         context.settings = settings
+        if resolution:
+            context.resolution = resolution
 
         try:
             if context.cancel_event.is_set():
@@ -704,6 +718,7 @@ class ComfyUIBot(commands.Bot):
                 workflow_name,
                 prompt,
                 settings,
+                context.resolution,
                 image_data,
             )
 
@@ -838,6 +853,8 @@ class ComfyUIBot(commands.Bot):
         fields: List[ui_embeds.EmbedField] = [("🎯 Mode", context.workflow_type.upper(), True)]
         if extra_fields:
             fields.extend(extra_fields)
+        if context.resolution:
+            fields.append(("🖼️ Resolution", context.resolution, True))
         fields.append(("🕒 Started", f"<t:{int(context.started_at)}:R>", True))
 
         return ui_embeds.build_generation_embed(

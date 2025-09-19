@@ -7,22 +7,40 @@ from discord import app_commands
 def rgen_command(bot):
     """Create the forge command for txt2img generation"""
 
+    resolution_choices = [
+        app_commands.Choice(name=label, value=value)
+        for label, value in bot.workflow_manager.get_resolution_presets()[:25]
+    ]
+
     @app_commands.command(
         name="rgen",
         description="Forge an image using text-to-image"
     )
     @app_commands.describe(
         prompt="Description of the image you want to create",
+        resolution="Select the output resolution (optional)",
         workflow="The workflow to use (optional)",
         settings="Additional settings (optional)"
     )
     async def rgen(
             interaction: discord.Interaction,
             prompt: str,
+            resolution: Optional[app_commands.Choice[str]] = None,
             workflow: Optional[str] = None,
             settings: Optional[str] = None
     ):
-        await bot.handle_generation(interaction, 'txt2img', prompt, workflow, settings)
+        selected_resolution = resolution.value if resolution else None
+        await bot.handle_generation(
+            interaction,
+            'txt2img',
+            prompt,
+            workflow,
+            settings,
+            resolution=selected_resolution,
+        )
+
+    if resolution_choices:
+        rgen = app_commands.choices(resolution=resolution_choices)(rgen)
 
     return rgen
 
@@ -47,7 +65,14 @@ def reforge_command(bot):
             workflow: Optional[str] = None,
             settings: Optional[str] = None
     ):
-        await bot.handle_generation(interaction, 'img2img', prompt, workflow, settings, image)
+        await bot.handle_generation(
+            interaction,
+            'img2img',
+            prompt,
+            workflow,
+            settings,
+            input_image=image,
+        )
 
     return reforge
 
@@ -72,7 +97,14 @@ def upscale_command(bot):
             workflow: Optional[str] = None,
             settings: Optional[str] = None
     ):
-        await bot.handle_generation(interaction, 'upscale', prompt, workflow, settings, image)
+        await bot.handle_generation(
+            interaction,
+            'upscale',
+            prompt,
+            workflow,
+            settings,
+            input_image=image,
+        )
 
     return upscale
 

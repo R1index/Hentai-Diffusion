@@ -9,6 +9,26 @@ comfyui:
         ssl_verify: false
       weight: 1
 
+resolutions:
+  - label: "Square — 1024x1024 (1:1)"
+    value: "square - 1024x1024 (1:1)"
+  - label: "Landscape — 1152x896 (4:5)"
+    value: "landscape - 1152x896 (4:5)"
+  - label: "Landscape — 1216x832 (3:2)"
+    value: "landscape - 1216x832 (3:2)"
+  - label: "Landscape — 1344x768 (16:9)"
+    value: "landscape - 1344x768 (16:9)"
+  - label: "Landscape — 1536x640 (21:9)"
+    value: "landscape - 1536x640 (21:9)"
+  - label: "Portrait — 896x1152 (4:5)"
+    value: "portrait - 896x1152 (4:5)"
+  - label: "Portrait — 832x1216 (2:3)"
+    value: "portrait - 832x1216 (2:3)"
+  - label: "Portrait — 768x1344 (9:16)"
+    value: "portrait - 768x1344 (9:16)"
+  - label: "Portrait — 640x1536 (2:3)"
+    value: "portrait - 640x1536 (2:3)"
+
 workflows:
   ExpNEW:
     type: txt2img
@@ -16,6 +36,8 @@ workflows:
     workflow: ./workflows/ExpNEW.json
     text_prompt_node_id: 45
     default: true
+    default_resolution: portrait - 832x1216 (2:3)
+    resolution_node_id: 9
     settings:
       - name: __before
         description: Will change steps for this workflow to the number provided in parenthesis
@@ -147,6 +169,8 @@ workflows:
     workflow: ./workflows/ExpNEWlandscape.json
     text_prompt_node_id: 45
     default: true
+    default_resolution: landscape - 1216x832 (3:2)
+    resolution_node_id: 9
     settings:
       - name: __before
         description: Will change steps for this workflow to the number provided in parenthesis
