@@ -11,8 +11,9 @@ import time
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 import discord
 import yaml
@@ -20,7 +21,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from logger import logger
-from .commands import rgen_command, workflows_command
+from .commands import profile_command, rgen_command, workflows_command
 from ..comfy.client import ComfyUIClient
 from ..comfy.workflow_manager import WorkflowManager
 from ..core.generation_queue import GenerationQueue
@@ -58,6 +59,7 @@ class ComfyUIBot(commands.Bot):
     GENERATION_COUNTS_FILE = "generation_counts.yml"
     DAILY_GENERATION_LIMIT = 50
     QUEUE_STUCK_THRESHOLD = 1800  # 30 minutes
+    STATS_RETENTION_DAYS = 90
 
     def __init__(self, configuration_path: str = "configuration.yml", plugins_path: str = "plugins"):
         intents = discord.Intents.default()
@@ -98,6 +100,7 @@ class ComfyUIBot(commands.Bot):
         self.supporter_role_name: str = "Supporter"
         self.supporter_role_id: Optional[str] = None
         self.user_generation_counts: Dict[str, int] = defaultdict(int)
+        self.user_generation_stats: Dict[str, Dict[str, Any]] = {}
         self.last_reset_time: float = time.time()
 
         os.makedirs("data", exist_ok=True)
@@ -169,6 +172,9 @@ class ComfyUIBot(commands.Bot):
                     data = yaml.safe_load(file) or {}
                     self.user_generation_counts = defaultdict(int, data.get("counts", {}))
                     self.last_reset_time = data.get("last_reset", time.time())
+                    stats_mutated = self._load_generation_stats(data.get("stats"))
+                    if stats_mutated:
+                        self._save_generation_counts()
                     logger.info("Generation counters restored from disk")
             else:
                 logger.info("Generation counters not found, creating new file")
@@ -185,6 +191,7 @@ class ComfyUIBot(commands.Bot):
             data = {
                 "counts": dict(self.user_generation_counts),
                 "last_reset": self.last_reset_time,
+                "stats": self._serialize_generation_stats(),
             }
             with open(counts_path, "w", encoding="utf-8") as file:
                 yaml.safe_dump(data, file, allow_unicode=True)
@@ -199,6 +206,154 @@ class ComfyUIBot(commands.Bot):
             self.last_reset_time = current_time
             self._save_generation_counts()
             logger.info("Daily generation counters reset")
+
+    def _load_generation_stats(self, raw_stats: Optional[dict]) -> bool:
+        self.user_generation_stats = {}
+        if not raw_stats:
+            return False
+
+        mutated = False
+        for user_id, payload in raw_stats.items():
+            if not isinstance(payload, dict):
+                continue
+
+            total = payload.get("total", 0)
+            try:
+                total_int = int(total)
+            except (TypeError, ValueError):
+                total_int = 0
+
+            daily_raw = payload.get("daily") or {}
+            if not isinstance(daily_raw, dict):
+                daily_raw = {}
+                mutated = True
+            daily: Dict[str, int] = {}
+            for date_str, count in daily_raw.items():
+                try:
+                    daily[str(date_str)] = int(count)
+                except (TypeError, ValueError):
+                    mutated = True
+
+            if self._prune_daily_history(daily):
+                mutated = True
+
+            self.user_generation_stats[str(user_id)] = {
+                "total": total_int,
+                "daily": daily,
+            }
+
+        return mutated
+
+    def _serialize_generation_stats(self) -> Dict[str, Dict[str, Any]]:
+        serialized: Dict[str, Dict[str, Any]] = {}
+        for user_id, payload in self.user_generation_stats.items():
+            total = payload.get("total", 0)
+            try:
+                total_int = int(total)
+            except (TypeError, ValueError):
+                total_int = 0
+
+            daily_src = payload.get("daily") or {}
+            if not isinstance(daily_src, dict):
+                daily_src = {}
+            daily: Dict[str, int] = {}
+            for date_str, count in daily_src.items():
+                try:
+                    daily[str(date_str)] = int(count)
+                except (TypeError, ValueError):
+                    continue
+
+            serialized[user_id] = {
+                "total": total_int,
+                "daily": daily,
+            }
+
+        return serialized
+
+    def _current_utc_date(self) -> date:
+        return datetime.now(timezone.utc).date()
+
+    def _prune_daily_history(self, history: Dict[str, int]) -> bool:
+        if not history:
+            return False
+
+        today = self._current_utc_date()
+        threshold = today - timedelta(days=self.STATS_RETENTION_DAYS)
+        modified = False
+
+        for key in list(history.keys()):
+            try:
+                day = datetime.strptime(key, "%Y-%m-%d").date()
+            except ValueError:
+                history.pop(key, None)
+                modified = True
+                continue
+
+            if day < threshold or day > today:
+                history.pop(key, None)
+                modified = True
+
+        return modified
+
+    def _record_successful_generation(self, user_id: str) -> None:
+        stats = self.user_generation_stats.setdefault(user_id, {"total": 0, "daily": {}})
+        stats["total"] = int(stats.get("total", 0)) + 1
+        daily = stats.setdefault("daily", {})
+        if not isinstance(daily, dict):
+            daily = {}
+            stats["daily"] = daily
+        today_key = self._current_utc_date().isoformat()
+        daily[today_key] = int(daily.get(today_key, 0)) + 1
+        self._prune_daily_history(daily)
+        self._save_generation_counts()
+
+    def get_user_generation_summary(self, user_id: str) -> Dict[str, int]:
+        stats = self.user_generation_stats.get(user_id)
+        if not stats:
+            return {"day": 0, "week": 0, "month": 0, "total": 0}
+
+        daily = stats.get("daily", {})
+        changed = False
+        if not isinstance(daily, dict):
+            daily = {}
+            stats["daily"] = daily
+            changed = True
+
+        if self._prune_daily_history(daily):
+            changed = True
+
+        if changed:
+            self._save_generation_counts()
+
+        today = self._current_utc_date()
+        week_cutoff = today - timedelta(days=6)
+        month_cutoff = today - timedelta(days=29)
+
+        day_total = 0
+        week_total = 0
+        month_total = 0
+
+        for key, value in daily.items():
+            try:
+                day = datetime.strptime(key, "%Y-%m-%d").date()
+            except ValueError:
+                continue
+
+            count = int(value)
+            if day == today:
+                day_total += count
+            if week_cutoff <= day <= today:
+                week_total += count
+            if month_cutoff <= day <= today:
+                month_total += count
+
+        total = int(stats.get("total", 0))
+        return {
+            "day": day_total,
+            "week": week_total,
+            "month": month_total,
+            "total": total,
+        }
 
     def _format_time_remaining(self) -> str:
         remaining = max(0.0, 86400 - (time.time() - self.last_reset_time))
@@ -275,6 +430,7 @@ class ComfyUIBot(commands.Bot):
             self.tree.add_command(rgen_command(self))
             self.tree.add_command(workflows_command(self))
             self.tree.add_command(self._create_limits_command())
+            self.tree.add_command(profile_command(self))
 
             synced_commands = await self.tree.sync()
             command_list = ", ".join(f"/{cmd.name}" for cmd in synced_commands) or "none"
@@ -923,6 +1079,9 @@ class ComfyUIBot(commands.Bot):
 
         context.finalized = True
         self.active_generations.pop(context.user_id, None)
+
+        if success:
+            self._record_successful_generation(context.user_id)
 
         if context.counted_usage and not success:
             new_value = max(0, self.user_generation_counts.get(context.user_id, 0) - 1)
