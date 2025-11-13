@@ -9,6 +9,9 @@ comfyui:
         ssl_verify: false
       weight: 1
 
+spoilers:
+  tags: []
+
 resolutions:
   - label: "Square — 1024x1024 (1:1)"
     value: "square - 1024x1024 (1:1)"

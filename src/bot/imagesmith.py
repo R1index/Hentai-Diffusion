@@ -6,6 +6,7 @@ import importlib
 import inspect
 import json
 import os
+import re
 import sys
 import time
 import uuid
@@ -13,7 +14,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, Iterable, List, Optional, Set
 
 import discord
 import yaml
@@ -53,6 +54,7 @@ class GenerationContext:
     completed: bool = False
     cancelled_notified: bool = False
     finalized: bool = False
+    force_spoiler: bool = False
 
 
 class ComfyUIBot(commands.Bot):
@@ -86,6 +88,10 @@ class ComfyUIBot(commands.Bot):
         # Generation tracking
         self.active_generations: Dict[str, GenerationContext] = {}
 
+        # Spoiler handling
+        self._spoiler_tags: Set[str] = set()
+        self._spoiler_tag_display: Dict[str, str] = {}
+
         # --- Sync over Discord channel (both bots publish & listen) ---
         self.SYNC_CHANNEL_ID: int = 1406937891203977358  # TODO: set your hidden #bot-sync channel ID
         self.SYNC_SHARED_SECRET: str = "fj39f9aj2J#d9a!_38dja0d9@qwe93"  # same secret on both bots
@@ -115,19 +121,56 @@ class ComfyUIBot(commands.Bot):
     def _get_counts_path(self) -> str:
         return os.path.join("data", self.GENERATION_COUNTS_FILE)
 
+    def _read_configuration_file(self) -> dict:
+        """Load the YAML configuration, handling possible encodings."""
+
+        for encoding in ("utf-8", "utf-8-sig", "cp1251"):
+            try:
+                with open(self.configuration_path, "r", encoding=encoding) as file:
+                    return yaml.safe_load(file) or {}
+            except FileNotFoundError:
+                logger.warning("Configuration file %s not found; using defaults", self.configuration_path)
+                return {}
+            except UnicodeDecodeError:
+                continue
+
+        raise UnicodeDecodeError("auto", b"", 0, 1, "Unable to decode config in known encodings")
+
+    def _write_configuration_file(self, data: dict) -> None:
+        """Persist configuration data back to disk."""
+
+        with open(self.configuration_path, "w", encoding="utf-8") as file:
+            yaml.safe_dump(data, file, allow_unicode=True, sort_keys=False)
+
+    def _normalize_tag(self, tag: str) -> str:
+        return re.sub(r"\s+", " ", tag.strip()).lower()
+
+    def _set_spoiler_tags(self, tags: Iterable[str]) -> None:
+        self._spoiler_tags.clear()
+        self._spoiler_tag_display.clear()
+
+        for tag in tags:
+            tag_str = str(tag).strip()
+            if not tag_str:
+                continue
+            normalized = self._normalize_tag(tag_str)
+            self._spoiler_tags.add(normalized)
+            self._spoiler_tag_display[normalized] = tag_str
+
+        if self._spoiler_tags:
+            logger.info("Spoiler tags loaded: %s", ", ".join(sorted(self._spoiler_tag_display.values())))
+        else:
+            logger.info("No spoiler tags configured")
+
+    def _persist_spoiler_tags(self) -> None:
+        data = self._read_configuration_file()
+        spoilers = data.setdefault("spoilers", {})
+        spoilers["tags"] = sorted(self._spoiler_tag_display.values(), key=str.lower)
+        self._write_configuration_file(data)
+
     def _load_security_lists(self) -> None:
         try:
-            config_data = None
-            for encoding in ("utf-8", "utf-8-sig", "cp1251"):
-                try:
-                    with open(self.configuration_path, "r", encoding=encoding) as file:
-                        config_data = yaml.safe_load(file) or {}
-                    break
-                except UnicodeDecodeError:
-                    continue
-
-            if config_data is None:
-                raise UnicodeDecodeError("auto", b"", 0, 1, "Unable to decode config in known encodings")
+            config_data = self._read_configuration_file()
 
             security = config_data.get("security", {}) or {}
             self.blocked_users = {str(user) for user in security.get("blocked_users", [])}
@@ -139,6 +182,8 @@ class ComfyUIBot(commands.Bot):
 
             supporter_role_id = security.get("supporter_role_id")
             self.supporter_role_id = str(supporter_role_id) if supporter_role_id else None
+
+            self._set_spoiler_tags(config_data.get("spoilers", {}).get("tags", []))
 
             logger.info(
                 "Security configuration loaded • blocked=%d donors=%d",
@@ -163,6 +208,7 @@ class ComfyUIBot(commands.Bot):
             self.access_guild_id = None
             self.supporter_role_name = "Supporter"
             self.supporter_role_id = None
+            self._set_spoiler_tags([])
 
     def _load_generation_counts(self) -> None:
         counts_path = self._get_counts_path()
@@ -206,6 +252,36 @@ class ComfyUIBot(commands.Bot):
             self.last_reset_time = current_time
             self._save_generation_counts()
             logger.info("Daily generation counters reset")
+
+    def _get_spoiler_tag_list(self) -> List[str]:
+        return sorted(self._spoiler_tag_display.values(), key=str.lower)
+
+    def _prompt_contains_spoiler_tag(self, prompt: Optional[str]) -> bool:
+        if not prompt or not self._spoiler_tags:
+            return False
+
+        normalized_prompt = re.sub(r"\s+", " ", prompt.lower())
+        return any(tag in normalized_prompt for tag in self._spoiler_tags)
+
+    def _format_user_for_log(self, user: discord.abc.User) -> str:
+        base_name = (
+            getattr(user, "global_name", None)
+            or getattr(user, "display_name", None)
+            or getattr(user, "name", None)
+            or str(user)
+        )
+        return f"{base_name} ({getattr(user, 'id', '?')})"
+
+    async def _ensure_manage_guild(self, interaction: discord.Interaction) -> bool:
+        perms = getattr(interaction.user, "guild_permissions", None)
+        if perms and perms.manage_guild:
+            return True
+
+        embed = ui_embeds.build_limit_embed(
+            "You need the **Manage Server** permission to modify spoiler tags."
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return False
 
     def _load_generation_stats(self, raw_stats: Optional[dict]) -> bool:
         self.user_generation_stats = {}
@@ -376,7 +452,11 @@ class ComfyUIBot(commands.Bot):
         ]
 
         for context in stuck_contexts:
-            logger.warning("gen[%s] timed out — cancelling", context.user_id)
+            logger.warning(
+                "gen[%s|%s] timed out — cancelling",
+                context.user_id,
+                self._format_user_for_log(context.user),
+            )
             context.cancel_event.set()
             if self.comfy_client and context.prompt_id:
                 try:
@@ -430,6 +510,7 @@ class ComfyUIBot(commands.Bot):
             self.tree.add_command(rgen_command(self))
             self.tree.add_command(workflows_command(self))
             self.tree.add_command(self._create_limits_command())
+            self.tree.add_command(self._create_spoiler_command())
             self.tree.add_command(profile_command(self))
 
             synced_commands = await self.tree.sync()
@@ -660,6 +741,123 @@ class ComfyUIBot(commands.Bot):
             await interaction.response.send_message(embed=embed, ephemeral=True)
 
         return limits_command
+
+    def _create_spoiler_command(self) -> app_commands.Group:
+        spoiler_group = app_commands.Group(name="spoiler", description="Manage spoiler tags")
+
+        @spoiler_group.command(name="list", description="Show configured spoiler tags")
+        async def spoiler_list(interaction: discord.Interaction) -> None:
+            tags = self._get_spoiler_tag_list()
+            if tags:
+                description = "\n".join(f"• `{tag}`" for tag in tags)
+                title = "📑 Spoiler tags"
+                color = ui_embeds.ACCENT_COLOR
+            else:
+                description = "No spoiler tags are configured. Use /spoiler add to create one."
+                title = "ℹ️ No spoiler tags"
+                color = ui_embeds.WARNING_COLOR
+
+            embed = ui_embeds.build_notice_embed(
+                title=title,
+                description=description,
+                color=color,
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        @spoiler_group.command(name="add", description="Add a tag that will force image spoilers")
+        @app_commands.describe(tag="Tag to treat as a spoiler trigger")
+        async def spoiler_add(interaction: discord.Interaction, tag: str) -> None:
+            if not await self._ensure_manage_guild(interaction):
+                return
+
+            cleaned = tag.strip()
+            if not cleaned:
+                embed = ui_embeds.build_notice_embed(
+                    title="❌ Invalid tag",
+                    description="Provide a non-empty tag to add.",
+                    color=ui_embeds.ERROR_COLOR,
+                )
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+                return
+
+            normalized = self._normalize_tag(cleaned)
+            if normalized in self._spoiler_tags:
+                existing = self._spoiler_tag_display.get(normalized, cleaned)
+                embed = ui_embeds.build_notice_embed(
+                    title="ℹ️ Tag already exists",
+                    description=f"`{existing}` is already configured as a spoiler tag.",
+                    color=ui_embeds.WARNING_COLOR,
+                )
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+                return
+
+            self._spoiler_tags.add(normalized)
+            self._spoiler_tag_display[normalized] = cleaned
+
+            try:
+                self._persist_spoiler_tags()
+            except Exception as exc:  # pragma: no cover - defensive
+                self._spoiler_tags.discard(normalized)
+                self._spoiler_tag_display.pop(normalized, None)
+                logger.error("Failed to persist spoiler tags: %s", exc)
+                embed = ui_embeds.build_notice_embed(
+                    title="❌ Failed to save tag",
+                    description="The tag could not be saved. Check logs for details.",
+                    color=ui_embeds.ERROR_COLOR,
+                )
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+                return
+
+            embed = ui_embeds.build_notice_embed(
+                title="✅ Spoiler tag added",
+                description=f"Images will now be hidden behind spoilers when prompts include `{cleaned}`.",
+                color=ui_embeds.SUCCESS_COLOR,
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        @spoiler_group.command(name="remove", description="Remove a configured spoiler tag")
+        @app_commands.describe(tag="Tag to remove from the spoiler list")
+        async def spoiler_remove(interaction: discord.Interaction, tag: str) -> None:
+            if not await self._ensure_manage_guild(interaction):
+                return
+
+            normalized = self._normalize_tag(tag)
+            if normalized not in self._spoiler_tags:
+                embed = ui_embeds.build_notice_embed(
+                    title="❌ Tag not found",
+                    description=f"`{tag}` is not configured as a spoiler tag.",
+                    color=ui_embeds.ERROR_COLOR,
+                )
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+                return
+
+            removed_display = self._spoiler_tag_display.get(normalized, tag)
+            self._spoiler_tags.discard(normalized)
+            self._spoiler_tag_display.pop(normalized, None)
+
+            try:
+                self._persist_spoiler_tags()
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.error("Failed to persist spoiler tags: %s", exc)
+                # Revert in-memory state
+                self._spoiler_tags.add(normalized)
+                self._spoiler_tag_display[normalized] = removed_display
+                embed = ui_embeds.build_notice_embed(
+                    title="❌ Failed to remove tag",
+                    description="The tag could not be removed. Check logs for details.",
+                    color=ui_embeds.ERROR_COLOR,
+                )
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+                return
+
+            embed = ui_embeds.build_notice_embed(
+                title="🗑️ Spoiler tag removed",
+                description=f"`{removed_display}` will no longer force spoilered images.",
+                color=ui_embeds.SUCCESS_COLOR,
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        return spoiler_group
     async def handle_generation(
         self,
         interaction: discord.Interaction,
@@ -682,8 +880,9 @@ class ComfyUIBot(commands.Bot):
             return
 
         logger.info(
-            "gen[%s] request received • type=%s workflow=%s resolution=%s",
+            "gen[%s|%s] request received • type=%s workflow=%s resolution=%s",
             user_id,
+            self._format_user_for_log(interaction.user),
             workflow_type,
             workflow or "default",
             resolution or "default",
@@ -701,6 +900,8 @@ class ComfyUIBot(commands.Bot):
             settings=settings,
             resolution=resolution,
         )
+
+        context.force_spoiler = self._prompt_contains_spoiler_tag(prompt)
 
         try:
             if not is_donor:
@@ -883,8 +1084,9 @@ class ComfyUIBot(commands.Bot):
                 return
 
             logger.info(
-                "gen[%s] submitting workflow=%s type=%s",
+                "gen[%s|%s] submitting workflow=%s type=%s",
                 context.user_id,
+                self._format_user_for_log(context.user),
                 workflow_name,
                 workflow_type,
             )
@@ -927,14 +1129,21 @@ class ComfyUIBot(commands.Bot):
 
             context.completed = True
             logger.info(
-                "gen[%s] completed workflow=%s in %.2fs",
+                "gen[%s|%s] completed workflow=%s in %.2fs",
                 context.user_id,
+                self._format_user_for_log(context.user),
                 workflow_name,
                 time.time() - start_ts,
             )
 
         except Exception as exc:
-            logger.error("gen[%s] failed: %s", context.user_id, exc, exc_info=True)
+            logger.error(
+                "gen[%s|%s] failed: %s",
+                context.user_id,
+                self._format_user_for_log(context.user),
+                exc,
+                exc_info=True,
+            )
             await self._update_generation_message(
                 context,
                 status=f"❌ {exc}",
@@ -990,6 +1199,12 @@ class ComfyUIBot(commands.Bot):
         if context.view:
             kwargs["view"] = context.view
         if image_file:
+            if context.force_spoiler and not image_file.filename.startswith("SPOILER_"):
+                image_file.filename = f"SPOILER_{image_file.filename}"
+                try:
+                    image_file.spoiler = True
+                except AttributeError:
+                    pass
             kwargs["attachments"] = [image_file]
 
         try:
@@ -1044,7 +1259,11 @@ class ComfyUIBot(commands.Bot):
             await interaction.followup.send("Generation already cancelled.", ephemeral=True)
             return
 
-        logger.info("gen[%s] cancellation requested", context.user_id)
+        logger.info(
+            "gen[%s|%s] cancellation requested",
+            context.user_id,
+            self._format_user_for_log(context.user),
+        )
         context.cancel_event.set()
         await self.generation_queue.cancel_pending(context)
 
