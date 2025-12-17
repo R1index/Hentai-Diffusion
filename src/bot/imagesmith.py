@@ -1365,26 +1365,26 @@ class ComfyUIBot(commands.Bot):
     async def _is_member_of_access_guild(self, interaction: discord.Interaction) -> bool:
         try:
             if not self.access_guild_id:
-                logger.info("Access guild check skipped: access_guild_id is empty")
+                logger.debug("access-guild: skip (id empty)")
                 return True
 
             try:
                 gid = int(self.access_guild_id)
             except Exception:
-                logger.warning("Access guild check: invalid access_guild_id=%r", self.access_guild_id)
+                logger.warning("access-guild: invalid id=%r", self.access_guild_id)
                 return False
 
             if interaction.guild and interaction.guild.id == gid:
                 target_guild = interaction.guild
-                logger.debug("Access guild check: using interaction guild %s", gid)
+                logger.debug("access-guild: using interaction guild %s", gid)
             else:
                 target_guild = self.get_guild(gid)
                 if target_guild is None:
                     try:
                         target_guild = await self.fetch_guild(gid)
-                        logger.debug("Access guild check: fetched guild %s", gid)
+                        logger.debug("access-guild: fetched guild %s", gid)
                     except Exception as exc:
-                        logger.warning("Access guild check: fetch_guild(%s) failed: %s", gid, exc)
+                        logger.warning("access-guild: fetch_guild(%s) failed: %s", gid, exc)
                         return False
 
             member = target_guild.get_member(interaction.user.id)
@@ -1393,22 +1393,13 @@ class ComfyUIBot(commands.Bot):
 
             try:
                 await target_guild.fetch_member(interaction.user.id)
-                logger.debug(
-                    "Access guild check: fetched member %s on guild %s",
-                    interaction.user.id,
-                    gid,
-                )
+                logger.debug("access-guild: fetched member %s on guild %s", interaction.user.id, gid)
                 return True
             except Exception as exc:
-                logger.info(
-                    "Access guild check: user %s is not in guild %s: %s",
-                    interaction.user.id,
-                    gid,
-                    exc,
-                )
+                logger.info("access-guild: user %s not in guild %s (%s)", interaction.user.id, gid, exc)
                 return False
         except Exception as exc:  # pragma: no cover - defensive
-            logger.error("Access guild check failed: %s", exc)
+            logger.error("access-guild: failed %s", exc)
             return False
 
     async def _send_access_guild_required_message(self, interaction: discord.Interaction) -> None:
@@ -1422,35 +1413,35 @@ class ComfyUIBot(commands.Bot):
     async def _has_unlimited_access(self, interaction: discord.Interaction) -> bool:
         try:
             if not self.access_guild_id:
-                logger.info("Supporter check: access_guild_id is empty")
+                logger.debug("supporter: skip (id empty)")
                 return False
 
             try:
                 gid = int(self.access_guild_id)
             except Exception:
-                logger.warning("Supporter check: invalid access_guild_id=%r", self.access_guild_id)
+                logger.warning("supporter: invalid id=%r", self.access_guild_id)
                 return False
 
             if interaction.guild and interaction.guild.id == gid:
                 target_guild = interaction.guild
-                logger.debug("Supporter check: using interaction guild %s", gid)
+                logger.debug("supporter: using interaction guild %s", gid)
             else:
                 target_guild = self.get_guild(gid)
                 if target_guild is None:
                     try:
                         target_guild = await self.fetch_guild(gid)
-                        logger.debug("Supporter check: fetched guild %s", gid)
+                        logger.debug("supporter: fetched guild %s", gid)
                     except Exception as exc:
-                        logger.warning("Supporter check: fetch_guild(%s) failed: %s", gid, exc)
+                        logger.warning("supporter: fetch_guild(%s) failed: %s", gid, exc)
                         return False
 
             member = target_guild.get_member(interaction.user.id)
             if member is None:
                 try:
                     member = await target_guild.fetch_member(interaction.user.id)
-                    logger.debug("Supporter check: fetched member %s on guild %s", interaction.user.id, gid)
+                    logger.debug("supporter: fetched member %s on guild %s", interaction.user.id, gid)
                 except Exception as exc:
-                    logger.info("Supporter check: user %s is not in guild %s: %s", interaction.user.id, gid, exc)
+                    logger.info("supporter: user %s not in guild %s (%s)", interaction.user.id, gid, exc)
                     return False
 
             role = None
