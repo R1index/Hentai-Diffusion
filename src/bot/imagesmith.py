@@ -1405,7 +1405,7 @@ class ComfyUIBot(commands.Bot):
     async def _send_access_guild_required_message(self, interaction: discord.Interaction) -> None:
         embed = ui_embeds.build_notice_embed(
             title="🚫 Access restricted",
-            description="Join the required server to start generations.",
+            description="Join the required server to start generations. https://discord.gg/XnxmanFBUp",
             color=ui_embeds.ERROR_COLOR,
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
