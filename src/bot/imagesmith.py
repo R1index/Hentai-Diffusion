@@ -62,7 +62,9 @@ class GenerationContext:
 
 class ComfyUIBot(commands.Bot):
     GENERATION_COUNTS_FILE = "generation_counts.yml"
-    DAILY_GENERATION_LIMIT = 50
+    DAILY_GENERATION_LIMIT = 25
+    WEEKLY_GENERATION_LIMIT = 70
+    MONTHLY_GENERATION_LIMIT = 200
     QUEUE_STUCK_THRESHOLD = 1800  # 30 minutes
     STATS_RETENTION_DAYS = 90
     MEMBERSHIP_CACHE_TTL = 300  # 5 minutes
@@ -924,6 +926,24 @@ class ComfyUIBot(commands.Bot):
 
         is_supporter = await self._has_unlimited_access(interaction)
         is_donor = is_supporter or user_id in self.donor_users
+        if not is_donor:
+            stats_summary = self.get_user_generation_summary(user_id)
+            if stats_summary["week"] >= self.WEEKLY_GENERATION_LIMIT:
+                await self._send_limit_reached_message(
+                    interaction,
+                    scope="week",
+                    used=stats_summary["week"],
+                    limit=self.WEEKLY_GENERATION_LIMIT,
+                )
+                return
+            if stats_summary["month"] >= self.MONTHLY_GENERATION_LIMIT:
+                await self._send_limit_reached_message(
+                    interaction,
+                    scope="month",
+                    used=stats_summary["month"],
+                    limit=self.MONTHLY_GENERATION_LIMIT,
+                )
+                return
 
         context = GenerationContext(
             user_id=user_id,
@@ -1395,16 +1415,34 @@ class ComfyUIBot(commands.Bot):
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    async def _send_limit_reached_message(self, interaction: discord.Interaction) -> None:
+    async def _send_limit_reached_message(
+        self,
+        interaction: discord.Interaction,
+        *,
+        scope: str = "day",
+        used: Optional[int] = None,
+        limit: Optional[int] = None,
+        reset_hint: Optional[str] = None,
+    ) -> None:
+        scope_map = {
+            "day": ("daily", self.DAILY_GENERATION_LIMIT, f"resets in {self._format_time_remaining()}"),
+            "week": ("weekly", self.WEEKLY_GENERATION_LIMIT, "rolling 7-day window"),
+            "month": ("monthly", self.MONTHLY_GENERATION_LIMIT, "rolling 30-day window"),
+        }
+        label, default_limit, default_hint = scope_map.get(scope, scope_map["day"])
+        used_value = used if used is not None else self.user_generation_counts.get(str(interaction.user.id), 0)
+        limit_value = limit if limit is not None else default_limit
+        hint_value = reset_hint if reset_hint is not None else default_hint
+
         usage = ui_embeds.format_usage_bar(
-            self.user_generation_counts[str(interaction.user.id)],
-            self.DAILY_GENERATION_LIMIT,
-            reset_hint=f"resets in {self._format_time_remaining()}",
+            used_value,
+            limit_value,
+            reset_hint=hint_value,
         )
         embed = ui_embeds.build_limit_embed(
             description=(
-                "You've reached the daily limit for the public tier.\n"
-                "Support us to unlock unlimited generations!\n\n"
+                f"You've reached the {label} limit for the public tier.\n"
+                "Upgrade to **Supporter** for unlimited generations and priority access.\n\n"
                 f"{usage}"
             )
         )
