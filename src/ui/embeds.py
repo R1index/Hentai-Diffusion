@@ -15,6 +15,7 @@ ERROR_COLOR = 0xED4245
 FOOTER_TEXT = "Support us ❤️ boosty.to/rindex"
 EMBED_TIMESTAMP = discord.utils.utcnow
 EmbedField = Tuple[str, str, bool]
+PROGRESS_SEGMENTS = 14
 
 
 def _truncate_block(value: Optional[str], limit: int) -> Optional[str]:
@@ -79,13 +80,19 @@ def build_generation_embed(
 ) -> discord.Embed:
     """Create a consistent embed for generation-related updates."""
 
+    description = "\n".join(
+        [
+            f"🧩 **Workflow:** `{workflow_name}`",
+            f"🙋 **Requested by:** {user.mention}",
+        ]
+    )
     embed = _base_embed(
         title=title,
-        description=f"**Workflow:** `{workflow_name}`\n**Requested by:** {user.mention}",
+        description=description,
         color=color,
     )
     _apply_user_context(embed, user)
-    embed.add_field(name="📊 Status", value=status, inline=False)
+    embed.add_field(name="📊 Status", value=f"> {status}", inline=False)
     _append_fields(embed, fields)
 
     if prompt:
@@ -140,11 +147,11 @@ def format_usage_bar(used: int, total: int, *, reset_hint: Optional[str] = None)
 
     total = max(total, 1)
     used = max(0, min(used, total))
-    filled = round((used / total) * 12)
-    bar = "█" * filled + "░" * (12 - filled)
+    filled = round((used / total) * PROGRESS_SEGMENTS)
+    bar = "▰" * filled + "▱" * (PROGRESS_SEGMENTS - filled)
     percentage = int((used / total) * 100)
-    parts: Sequence[str] = [f"**{used}/{total}** ({percentage}%)"]
+    parts: Sequence[str] = [f"**{used}/{total}** • {percentage}%"]
     if reset_hint:
         parts.append(f"⏳ {reset_hint}")
     progress_line = f"`{bar}`"
-    return " • ".join(parts) + "\n" + progress_line
+    return "\n".join([" • ".join(parts), progress_line])
