@@ -14,7 +14,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Set
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 import discord
 import yaml
@@ -55,13 +55,20 @@ class GenerationContext:
     cancelled_notified: bool = False
     finalized: bool = False
     force_spoiler: bool = False
+    last_status: Optional[str] = None
+    last_message_update: float = 0.0
+    last_embed_signature: Optional[str] = None
 
 
 class ComfyUIBot(commands.Bot):
     GENERATION_COUNTS_FILE = "generation_counts.yml"
-    DAILY_GENERATION_LIMIT = 50
+    DAILY_GENERATION_LIMIT = 25
+    WEEKLY_GENERATION_LIMIT = 70
+    MONTHLY_GENERATION_LIMIT = 200
     QUEUE_STUCK_THRESHOLD = 1800  # 30 minutes
     STATS_RETENTION_DAYS = 90
+    MEMBERSHIP_CACHE_TTL = 300  # 5 minutes
+    MESSAGE_UPDATE_INTERVAL = 1.5
 
     def __init__(self, configuration_path: str = "configuration.yml", plugins_path: str = "plugins"):
         intents = discord.Intents.default()
@@ -108,6 +115,10 @@ class ComfyUIBot(commands.Bot):
         self.user_generation_counts: Dict[str, int] = defaultdict(int)
         self.user_generation_stats: Dict[str, Dict[str, Any]] = {}
         self.last_reset_time: float = time.time()
+        self._access_check_cache: Dict[str, Tuple[bool, float]] = {}
+        self._supporter_check_cache: Dict[str, Tuple[bool, float]] = {}
+        self._cached_access_guild: Optional[discord.Guild] = None
+        self._cached_access_guild_expiry: float = 0.0
 
         os.makedirs("data", exist_ok=True)
         self._load_security_lists()
@@ -437,6 +448,22 @@ class ComfyUIBot(commands.Bot):
         minutes = int((remaining % 3600) // 60)
         return f"{hours}h {minutes}m"
 
+    def _get_cached_flag(self, cache: Dict[str, Tuple[bool, float]], user_id: str) -> Optional[bool]:
+        record = cache.get(user_id)
+        if not record:
+            return None
+
+        state, expires_at = record
+        if time.time() > expires_at:
+            cache.pop(user_id, None)
+            return None
+
+        return state
+
+    def _set_cached_flag(self, cache: Dict[str, Tuple[bool, float]], user_id: str, value: bool, ttl: Optional[float] = None) -> None:
+        expires_at = time.time() + (ttl or self.MEMBERSHIP_CACHE_TTL)
+        cache[user_id] = (value, expires_at)
+
     # ------------------------------------------------------------------
     # Background monitoring
     # ------------------------------------------------------------------
@@ -483,19 +510,24 @@ class ComfyUIBot(commands.Bot):
         await self._load_plugins()
 
         try:
+            comfy_cfg = self.workflow_manager.config.get("comfyui") or {}
+            instances_cfg = comfy_cfg.get("instances") or []
+            if not instances_cfg:
+                raise RuntimeError("No ComfyUI instances configured. Set comfyui.instances in configuration.yml.")
+
             await self.hook_manager.execute_hook(
                 "is.comfyui.client.before_create",
-                self.workflow_manager.config["comfyui"]["instances"],
+                instances_cfg,
             )
 
             self.comfy_client = ComfyUIClient(
-                self.workflow_manager.config["comfyui"]["instances"],
+                instances_cfg,
                 self.hook_manager,
             )
 
             await self.hook_manager.execute_hook(
                 "is.comfyui.client.after_create",
-                self.workflow_manager.config["comfyui"]["instances"],
+                instances_cfg,
             )
 
             await self.comfy_client.connect()
@@ -894,6 +926,24 @@ class ComfyUIBot(commands.Bot):
 
         is_supporter = await self._has_unlimited_access(interaction)
         is_donor = is_supporter or user_id in self.donor_users
+        if not is_donor:
+            stats_summary = self.get_user_generation_summary(user_id)
+            if stats_summary["week"] >= self.WEEKLY_GENERATION_LIMIT:
+                await self._send_limit_reached_message(
+                    interaction,
+                    scope="week",
+                    used=stats_summary["week"],
+                    limit=self.WEEKLY_GENERATION_LIMIT,
+                )
+                return
+            if stats_summary["month"] >= self.MONTHLY_GENERATION_LIMIT:
+                await self._send_limit_reached_message(
+                    interaction,
+                    scope="month",
+                    used=stats_summary["month"],
+                    limit=self.MONTHLY_GENERATION_LIMIT,
+                )
+                return
 
         context = GenerationContext(
             user_id=user_id,
@@ -1191,12 +1241,34 @@ class ComfyUIBot(commands.Bot):
         if not context.message:
             return
 
+        now = time.time()
+        usage_text = self._usage_text(context)
+        signature_payload = (
+            status,
+            title,
+            color,
+            tuple(extra_fields or []),
+            context.workflow_name,
+            context.resolution,
+            context.prompt,
+            context.settings,
+            usage_text,
+        )
+        signature_hash = hashlib.sha1(repr(signature_payload).encode("utf-8")).hexdigest()
+
+        if not image_file:
+            if context.last_embed_signature == signature_hash and (now - context.last_message_update) < self.MESSAGE_UPDATE_INTERVAL:
+                return
+            if status == context.last_status and (now - context.last_message_update) < self.MESSAGE_UPDATE_INTERVAL:
+                return
+
         embed = self._build_generation_embed(
             context,
             status=status,
             title=title,
             color=color,
             extra_fields=extra_fields,
+            usage_override=usage_text,
         )
 
         kwargs = {"embed": embed}
@@ -1213,6 +1285,9 @@ class ComfyUIBot(commands.Bot):
 
         try:
             await context.message.edit(**kwargs)
+            context.last_message_update = now
+            context.last_status = status
+            context.last_embed_signature = signature_hash
         except discord.HTTPException as exc:  # pragma: no cover - defensive
             logger.debug("Failed to update message for %s: %s", context.user_id, exc)
 
@@ -1224,6 +1299,7 @@ class ComfyUIBot(commands.Bot):
         title: str,
         color: int,
         extra_fields: Optional[List[ui_embeds.EmbedField]] = None,
+        usage_override: Optional[str] = None,
     ) -> discord.Embed:
         fields: List[ui_embeds.EmbedField] = [("🎯 Mode", context.workflow_type.upper(), True)]
         if extra_fields:
@@ -1240,7 +1316,7 @@ class ComfyUIBot(commands.Bot):
             color=color,
             prompt=context.prompt,
             settings=context.settings,
-            usage=self._usage_text(context),
+            usage=usage_override or self._usage_text(context),
             fields=fields,
         )
 
@@ -1339,16 +1415,34 @@ class ComfyUIBot(commands.Bot):
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    async def _send_limit_reached_message(self, interaction: discord.Interaction) -> None:
+    async def _send_limit_reached_message(
+        self,
+        interaction: discord.Interaction,
+        *,
+        scope: str = "day",
+        used: Optional[int] = None,
+        limit: Optional[int] = None,
+        reset_hint: Optional[str] = None,
+    ) -> None:
+        scope_map = {
+            "day": ("daily", self.DAILY_GENERATION_LIMIT, f"resets in {self._format_time_remaining()}"),
+            "week": ("weekly", self.WEEKLY_GENERATION_LIMIT, "rolling 7-day window"),
+            "month": ("monthly", self.MONTHLY_GENERATION_LIMIT, "rolling 30-day window"),
+        }
+        label, default_limit, default_hint = scope_map.get(scope, scope_map["day"])
+        used_value = used if used is not None else self.user_generation_counts.get(str(interaction.user.id), 0)
+        limit_value = limit if limit is not None else default_limit
+        hint_value = reset_hint if reset_hint is not None else default_hint
+
         usage = ui_embeds.format_usage_bar(
-            self.user_generation_counts[str(interaction.user.id)],
-            self.DAILY_GENERATION_LIMIT,
-            reset_hint=f"resets in {self._format_time_remaining()}",
+            used_value,
+            limit_value,
+            reset_hint=hint_value,
         )
         embed = ui_embeds.build_limit_embed(
             description=(
-                "You've reached the daily limit for the public tier.\n"
-                "Support us to unlock unlimited generations!\n\n"
+                f"You've reached the {label} limit for the public tier.\n"
+                "Upgrade to **Supporter** for unlimited generations and priority access.\n\n"
                 f"{usage}"
             )
         )
@@ -1362,7 +1456,34 @@ class ComfyUIBot(commands.Bot):
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
+    async def _get_access_guild(self, gid: int) -> Optional[discord.Guild]:
+        now = time.time()
+        if self._cached_access_guild and self._cached_access_guild.id == gid and now < self._cached_access_guild_expiry:
+            return self._cached_access_guild
+
+        guild: Optional[discord.Guild] = None
+        if self.guilds:
+            guild = discord.utils.get(self.guilds, id=gid)
+        if guild is None:
+            guild = self.get_guild(gid)
+        if guild is None:
+            try:
+                guild = await self.fetch_guild(gid)
+                logger.debug("access-guild: fetched guild %s", gid)
+            except Exception as exc:
+                logger.warning("access-guild: fetch_guild(%s) failed: %s", gid, exc)
+
+        if guild:
+            self._cached_access_guild = guild
+            self._cached_access_guild_expiry = now + self.MEMBERSHIP_CACHE_TTL
+        return guild
+
     async def _is_member_of_access_guild(self, interaction: discord.Interaction) -> bool:
+        user_id = str(interaction.user.id)
+        cached = self._get_cached_flag(self._access_check_cache, user_id)
+        if cached is not None:
+            return cached
+
         try:
             if not self.access_guild_id:
                 logger.debug("access-guild: skip (id empty)")
@@ -1378,25 +1499,23 @@ class ComfyUIBot(commands.Bot):
                 target_guild = interaction.guild
                 logger.debug("access-guild: using interaction guild %s", gid)
             else:
-                target_guild = self.get_guild(gid)
+                target_guild = await self._get_access_guild(gid)
                 if target_guild is None:
-                    try:
-                        target_guild = await self.fetch_guild(gid)
-                        logger.debug("access-guild: fetched guild %s", gid)
-                    except Exception as exc:
-                        logger.warning("access-guild: fetch_guild(%s) failed: %s", gid, exc)
-                        return False
+                    return False
 
             member = target_guild.get_member(interaction.user.id)
             if member is not None:
+                self._set_cached_flag(self._access_check_cache, user_id, True)
                 return True
 
             try:
                 await target_guild.fetch_member(interaction.user.id)
                 logger.debug("access-guild: fetched member %s on guild %s", interaction.user.id, gid)
+                self._set_cached_flag(self._access_check_cache, user_id, True)
                 return True
             except Exception as exc:
                 logger.info("access-guild: user %s not in guild %s (%s)", interaction.user.id, gid, exc)
+                self._set_cached_flag(self._access_check_cache, user_id, False)
                 return False
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("access-guild: failed %s", exc)
@@ -1411,6 +1530,11 @@ class ComfyUIBot(commands.Bot):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     async def _has_unlimited_access(self, interaction: discord.Interaction) -> bool:
+        user_id = str(interaction.user.id)
+        cached = self._get_cached_flag(self._supporter_check_cache, user_id)
+        if cached is not None:
+            return cached
+
         try:
             if not self.access_guild_id:
                 logger.debug("supporter: skip (id empty)")
@@ -1426,14 +1550,9 @@ class ComfyUIBot(commands.Bot):
                 target_guild = interaction.guild
                 logger.debug("supporter: using interaction guild %s", gid)
             else:
-                target_guild = self.get_guild(gid)
+                target_guild = await self._get_access_guild(gid)
                 if target_guild is None:
-                    try:
-                        target_guild = await self.fetch_guild(gid)
-                        logger.debug("supporter: fetched guild %s", gid)
-                    except Exception as exc:
-                        logger.warning("supporter: fetch_guild(%s) failed: %s", gid, exc)
-                        return False
+                    return False
 
             member = target_guild.get_member(interaction.user.id)
             if member is None:
@@ -1442,6 +1561,7 @@ class ComfyUIBot(commands.Bot):
                     logger.debug("supporter: fetched member %s on guild %s", interaction.user.id, gid)
                 except Exception as exc:
                     logger.info("supporter: user %s not in guild %s (%s)", interaction.user.id, gid, exc)
+                    self._set_cached_flag(self._supporter_check_cache, user_id, False)
                     return False
 
             role = None
@@ -1481,8 +1601,10 @@ class ComfyUIBot(commands.Bot):
                 role.name,
                 has_role,
             )
+            self._set_cached_flag(self._supporter_check_cache, user_id, has_role)
             return has_role
 
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("Supporter role check failed: %s", exc, exc_info=True)
+            self._set_cached_flag(self._supporter_check_cache, user_id, False)
             return False

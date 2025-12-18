@@ -11,8 +11,13 @@ from logger import logger
 class WorkflowManager:
     """Manages ComfyUI workflows and their configurations"""
     def __init__(self, config_path: str):
-        self.config = self._load_config(config_path)
-        self.workflows = self.config['workflows']
+        self.config = self._load_config(config_path) or {}
+        if "workflows" not in self.config:
+            raise ValueError("configuration.yml is missing required 'workflows' section")
+        if "comfyui" not in self.config:
+            raise ValueError("configuration.yml is missing required 'comfyui' section")
+
+        self.workflows = self.config["workflows"]
         self.default_workflow = self.config.get('default_workflow')
         self._resolution_presets: List[Tuple[str, str]] = self._parse_resolution_presets(
             self.config.get('resolutions')
@@ -116,6 +121,8 @@ class WorkflowManager:
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
                 return yaml.safe_load(f)
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(f"Configuration file not found: {config_path}") from exc
         except UnicodeDecodeError:
             # Если файл с BOM
             with open(config_path, 'r', encoding='utf-8-sig') as f:
