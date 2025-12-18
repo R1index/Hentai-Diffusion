@@ -9,11 +9,15 @@ if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 async def main():
-    bot = ComfyUIBot()
+    try:
+        bot = ComfyUIBot()
+    except Exception as exc:
+        logger.error("Failed to initialize bot: %s", exc, exc_info=True)
+        sys.exit(1)
 
     logger.info("Starting bot...")
     try:
-        discord_token = os.getenv("DISCORD_TOKEN") or bot.workflow_manager.config["discord"]["token"]
+        discord_token = os.getenv("DISCORD_TOKEN") or bot.workflow_manager.config.get("discord", {}).get("token")
         if not discord_token:
             raise RuntimeError("Discord token is missing. Set DISCORD_TOKEN env var or fill configuration.yml.")
 

@@ -19,7 +19,8 @@ def _truncate_block(value: Optional[str], limit: int) -> Optional[str]:
     if not value:
         return None
     truncated = value[:limit]
-    return f"```{truncated}```"
+    suffix = "…" if len(value) > limit else ""
+    return f"```{truncated}{suffix}```"
 
 
 def build_generation_embed(
@@ -37,12 +38,21 @@ def build_generation_embed(
 ) -> discord.Embed:
     """Create a consistent embed for generation-related updates."""
 
-    description = (
-        f"**Workflow:** `{workflow_name}`\n"
-        f"**Requested by:** {user.mention}"
+    author_name = getattr(user, "global_name", None) or getattr(user, "display_name", None) or getattr(user, "name", None) or "User"
+    embed = discord.Embed(
+        title=title,
+        description=(
+            f"**Workflow:** `{workflow_name}`\n"
+            f"**Requested by:** {user.mention}"
+        ),
+        color=color,
+        timestamp=discord.utils.utcnow(),
     )
+    avatar = getattr(user, "display_avatar", None)
+    if avatar:
+        embed.set_author(name=author_name, icon_url=avatar.url)
+        embed.set_thumbnail(url=avatar.url)
 
-    embed = discord.Embed(title=title, description=description, color=color)
     embed.add_field(name="📊 Status", value=status, inline=False)
 
     if fields:
@@ -78,7 +88,12 @@ def build_error_embed(*, user: discord.abc.User, workflow_name: str, error: str)
 def build_notice_embed(*, title: str, description: str, color: int = ACCENT_COLOR) -> discord.Embed:
     """Build a simple embed with the shared footer."""
 
-    embed = discord.Embed(title=title, description=description, color=color)
+    embed = discord.Embed(
+        title=title,
+        description=description,
+        color=color,
+        timestamp=discord.utils.utcnow(),
+    )
     embed.set_footer(text="Support us ❤️ boosty.to/rindex")
     return embed
 
@@ -100,7 +115,9 @@ def format_usage_bar(used: int, total: int, *, reset_hint: Optional[str] = None)
     used = max(0, min(used, total))
     filled = round((used / total) * 12)
     bar = "█" * filled + "░" * (12 - filled)
-    parts: Sequence[str] = [f"`{used}/{total}`", f"`{bar}`"]
+    percentage = int((used / total) * 100)
+    parts: Sequence[str] = [f"**{used}/{total}** ({percentage}%)"]
     if reset_hint:
-        parts = [parts[0], reset_hint, parts[1]]
-    return " • ".join(parts[:-1]) + "\n" + parts[-1]
+        parts.append(f"⏳ {reset_hint}")
+    progress_line = f"`{bar}`"
+    return " • ".join(parts) + "\n" + progress_line
