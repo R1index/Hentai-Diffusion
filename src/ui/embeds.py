@@ -12,15 +12,56 @@ SUCCESS_COLOR = 0x57F287
 WARNING_COLOR = 0xFEE75C
 ERROR_COLOR = 0xED4245
 
+FOOTER_TEXT = "Support us ❤️ boosty.to/rindex"
+EMBED_TIMESTAMP = discord.utils.utcnow
 EmbedField = Tuple[str, str, bool]
 
 
 def _truncate_block(value: Optional[str], limit: int) -> Optional[str]:
+    """Truncate a long text block while keeping Discord-friendly formatting."""
+
     if not value:
         return None
     truncated = value[:limit]
     suffix = "…" if len(value) > limit else ""
     return f"```{truncated}{suffix}```"
+
+
+def _base_embed(*, title: str, description: str, color: int) -> discord.Embed:
+    """Create a base embed with shared timestamp/footer styling."""
+
+    embed = discord.Embed(
+        title=title,
+        description=description,
+        color=color,
+        timestamp=EMBED_TIMESTAMP(),
+    )
+    embed.set_footer(text=FOOTER_TEXT)
+    return embed
+
+
+def _apply_user_context(embed: discord.Embed, user: discord.abc.User) -> None:
+    """Enrich an embed with requester avatar/name context."""
+
+    avatar = getattr(user, "display_avatar", None)
+    author_name = (
+        getattr(user, "global_name", None)
+        or getattr(user, "display_name", None)
+        or getattr(user, "name", None)
+        or "User"
+    )
+
+    if avatar:
+        embed.set_author(name=author_name, icon_url=avatar.url)
+        embed.set_thumbnail(url=avatar.url)
+
+
+def _append_fields(embed: discord.Embed, fields: Optional[Iterable[EmbedField]]) -> None:
+    if not fields:
+        return
+
+    for name, value, inline in fields:
+        embed.add_field(name=name, value=value, inline=inline)
 
 
 def build_generation_embed(
@@ -34,30 +75,18 @@ def build_generation_embed(
     settings: Optional[str] = None,
     usage: Optional[str] = None,
     fields: Optional[Iterable[EmbedField]] = None,
-    footer: str = "Support us ❤️ boosty.to/rindex",
+    footer: str = FOOTER_TEXT,
 ) -> discord.Embed:
     """Create a consistent embed for generation-related updates."""
 
-    author_name = getattr(user, "global_name", None) or getattr(user, "display_name", None) or getattr(user, "name", None) or "User"
-    embed = discord.Embed(
+    embed = _base_embed(
         title=title,
-        description=(
-            f"**Workflow:** `{workflow_name}`\n"
-            f"**Requested by:** {user.mention}"
-        ),
+        description=f"**Workflow:** `{workflow_name}`\n**Requested by:** {user.mention}",
         color=color,
-        timestamp=discord.utils.utcnow(),
     )
-    avatar = getattr(user, "display_avatar", None)
-    if avatar:
-        embed.set_author(name=author_name, icon_url=avatar.url)
-        embed.set_thumbnail(url=avatar.url)
-
+    _apply_user_context(embed, user)
     embed.add_field(name="📊 Status", value=status, inline=False)
-
-    if fields:
-        for name, value, inline in fields:
-            embed.add_field(name=name, value=value, inline=inline)
+    _append_fields(embed, fields)
 
     if prompt:
         embed.add_field(name="🧠 Prompt", value=_truncate_block(prompt, 1000), inline=False)
@@ -68,7 +97,8 @@ def build_generation_embed(
     if usage:
         embed.add_field(name="📈 Usage", value=usage, inline=False)
 
-    embed.set_footer(text=footer)
+    if footer:
+        embed.set_footer(text=footer)
     return embed
 
 
@@ -88,14 +118,11 @@ def build_error_embed(*, user: discord.abc.User, workflow_name: str, error: str)
 def build_notice_embed(*, title: str, description: str, color: int = ACCENT_COLOR) -> discord.Embed:
     """Build a simple embed with the shared footer."""
 
-    embed = discord.Embed(
+    return _base_embed(
         title=title,
         description=description,
         color=color,
-        timestamp=discord.utils.utcnow(),
     )
-    embed.set_footer(text="Support us ❤️ boosty.to/rindex")
-    return embed
 
 
 def build_limit_embed(description: str) -> discord.Embed:
