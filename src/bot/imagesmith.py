@@ -103,6 +103,7 @@ class ComfyUIBot(commands.Bot):
         # Generation tracking
         self.active_generations: Dict[str, List[GenerationContext]] = defaultdict(list)
         self.synced_active_slots: Dict[str, int] = defaultdict(int)
+        self._sync_channel_cache: Optional[discord.abc.Messageable] = None
 
         # Spoiler handling
         self._spoiler_tags: Set[str] = set()
@@ -848,6 +849,22 @@ class ComfyUIBot(commands.Bot):
             if expiry <= now:
                 self._sync_seen.pop(key, None)
 
+    async def _get_sync_channel(self) -> Optional[discord.abc.Messageable]:
+        if self._sync_channel_cache:
+            return self._sync_channel_cache
+
+        channel = self.get_channel(self.SYNC_CHANNEL_ID)
+        if not channel:
+            try:
+                channel = await self.fetch_channel(self.SYNC_CHANNEL_ID)
+            except Exception:
+                channel = None
+
+        if channel:
+            self._sync_channel_cache = channel
+
+        return channel
+
     async def _publish_limit_update(
         self,
         *,
@@ -903,13 +920,8 @@ class ComfyUIBot(commands.Bot):
         max_parallel: int,
     ) -> None:
         try:
-            channel = self.get_channel(self.SYNC_CHANNEL_ID)
-            if not channel:
-                try:
-                    channel = await self.fetch_channel(self.SYNC_CHANNEL_ID)
-                except Exception:
-                    channel = None
-            if not channel:
+            channel = await self._get_sync_channel()
+            if not channel or not self.SYNC_CHANNEL_ID:
                 return
 
             event_id = str(uuid.uuid4())
