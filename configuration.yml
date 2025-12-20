@@ -32,6 +32,8 @@ resolutions:
   - label: "Portrait — 640x1536 (9:21)"
     value: "portrait - 640x1536 (9:21)"
 
+prompt_presets_file: data/prompt_presets.json
+
 workflows:
   ExpNEW:
     type: txt2img
