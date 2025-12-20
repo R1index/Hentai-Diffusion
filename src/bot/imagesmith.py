@@ -1366,6 +1366,7 @@ class ComfyUIBot(commands.Bot):
             settings,
             context.resolution,
             image_data,
+            context.seed,
             priority=context.tier.queue_priority,
         )
     async def _run_generation_pipeline(
@@ -1377,6 +1378,7 @@ class ComfyUIBot(commands.Bot):
         settings: Optional[str],
         resolution: Optional[str],
         image_data: Optional[bytes],
+        seed: Optional[int],
     ) -> None:
         start_ts = time.time()
         context.workflow_name = workflow_name
