@@ -55,6 +55,7 @@ class GenerationContext:
     workflow_type: str
     is_donor: bool
     prompt: Optional[str] = None
+    prompt_preset_name: Optional[str] = None
     settings: Optional[str] = None
     resolution: Optional[str] = None
     started_at: float = field(default_factory=time.time)
@@ -1119,6 +1120,7 @@ class ComfyUIBot(commands.Bot):
         workflow: Optional[str] = None,
         settings: Optional[str] = None,
         resolution: Optional[str] = None,
+        prompt_preset: Optional[str] = None,
         input_image: Optional[discord.Attachment] = None,
     ) -> None:
         user_id = str(interaction.user.id)
@@ -1158,6 +1160,8 @@ class ComfyUIBot(commands.Bot):
         is_supporter = tier.daily_limit is None
         is_donor = is_supporter or user_id in self.donor_users
 
+        final_prompt, preset_name = self.workflow_manager.apply_prompt_preset(prompt_preset, prompt)
+
         context = GenerationContext(
             user_id=user_id,
             user=interaction.user,
@@ -1165,12 +1169,13 @@ class ComfyUIBot(commands.Bot):
             is_donor=is_donor,
             tier=tier,
             daily_limit=tier.daily_limit,
-            prompt=prompt,
+            prompt=final_prompt,
+            prompt_preset_name=preset_name,
             settings=settings,
             resolution=resolution,
         )
 
-        context.force_spoiler = self._prompt_contains_spoiler_tag(prompt)
+        context.force_spoiler = self._prompt_contains_spoiler_tag(final_prompt)
 
         try:
             if tier.daily_limit is not None:
@@ -1203,9 +1208,9 @@ class ComfyUIBot(commands.Bot):
             context.slot_counted = True
             try:
                 asyncio.create_task(
-                    self._publish_active_delta(
-                        user_id=int(user_id),
-                        delta=1,
+                self._publish_active_delta(
+                    user_id=int(user_id),
+                    delta=1,
                         tier_name=tier.name,
                         queue_priority=tier.queue_priority,
                         max_parallel=tier.max_parallel_generations,
@@ -1216,7 +1221,7 @@ class ComfyUIBot(commands.Bot):
             await self._process_generation(
                 interaction,
                 workflow_type,
-                prompt,
+                final_prompt,
                 workflow,
                 settings,
                 resolution,
@@ -1511,6 +1516,8 @@ class ComfyUIBot(commands.Bot):
         fields: List[ui_embeds.EmbedField] = [("🎯 Mode", context.workflow_type.upper(), True)]
         if extra_fields:
             fields.extend(extra_fields)
+        if context.prompt_preset_name:
+            fields.append(("🏷️ Preset", context.prompt_preset_name, True))
         if context.resolution:
             fields.append(("🖼️ Resolution", context.resolution, True))
         fields.append(("🕒 Started", f"<t:{int(context.started_at)}:R>", True))

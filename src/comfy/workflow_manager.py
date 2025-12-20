@@ -1,5 +1,7 @@
 import json
+import re
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -8,15 +10,42 @@ import yaml
 from logger import logger
 
 
+@dataclass(frozen=True)
+class PromptPreset:
+    name: str
+    tags: str
+    value: str
+
+    def apply(self, prompt: Optional[str]) -> str:
+        """Prepend the preset tags to the provided prompt."""
+
+        base_prompt = prompt.strip() if prompt else ""
+        prefix = self.tags.strip()
+
+        if not prefix:
+            return base_prompt
+
+        return f"{prefix} {base_prompt}".strip()
+
+
 class WorkflowManager:
     """Manages ComfyUI workflows and their configurations"""
     def __init__(self, config_path: str):
+        self.config_path = Path(config_path)
         self.config = self._load_config(config_path)
         self.workflows = self.config['workflows']
         self.default_workflow = self.config.get('default_workflow')
         self._resolution_presets: List[Tuple[str, str]] = self._parse_resolution_presets(
             self.config.get('resolutions')
         )
+        self._prompt_presets: List[PromptPreset] = self._load_prompt_presets(
+            self.config.get('prompt_presets_file')
+        )
+        self._prompt_preset_lookup: Dict[str, PromptPreset] = {
+            preset.value: preset for preset in self._prompt_presets
+        }
+
+        self._config_dir = self.config_path.parent
 
         # Get ComfyUI input directory from config
         self.input_dir = Path(self.config.get('comfyui', {}).get('input_dir', 'input'))
@@ -48,6 +77,87 @@ class WorkflowManager:
             presets.append((str(label), str(value)))
 
         return presets
+
+    def _load_prompt_presets(self, presets_path: Optional[str]) -> List[PromptPreset]:
+        """Load prompt presets from a JSON file."""
+
+        if not presets_path:
+            logger.info("Prompt presets file not configured; skipping presets")
+            return []
+
+        path = Path(presets_path)
+        if not path.is_absolute():
+            path = self.config_path.parent / path
+
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                raw_presets = json.load(f)
+        except FileNotFoundError:
+            logger.info("Prompt presets file %s not found; no presets loaded", path)
+            return []
+        except json.JSONDecodeError as exc:
+            logger.error("Failed to parse prompt presets file %s: %s", path, exc)
+            return []
+
+        presets: List[PromptPreset] = []
+
+        def add_preset(name: Optional[str], tags: Optional[object], value: Optional[str] = None) -> None:
+            if not name or tags is None:
+                return
+
+            if isinstance(tags, list):
+                tags_str = ", ".join(str(tag).strip() for tag in tags if str(tag).strip())
+            else:
+                tags_str = str(tags).strip()
+
+            if not tags_str:
+                return
+
+            preset_value = value or self._slugify_value(name)
+            presets.append(PromptPreset(str(name), tags_str, preset_value))
+
+        if isinstance(raw_presets, dict):
+            for name, value in raw_presets.items():
+                if isinstance(value, dict):
+                    add_preset(value.get('name') or name, value.get('tags'), value.get('value'))
+                else:
+                    add_preset(name, value)
+        elif isinstance(raw_presets, list):
+            for idx, item in enumerate(raw_presets):
+                if isinstance(item, dict):
+                    add_preset(item.get('name') or item.get('title'), item.get('tags'), item.get('value'))
+                else:
+                    add_preset(f"Preset {idx + 1}", item)
+
+        if presets:
+            logger.info("Loaded %d prompt presets from %s", len(presets), path)
+        else:
+            logger.info("No valid prompt presets found in %s", path)
+
+        return presets
+
+    def _slugify_value(self, name: str) -> str:
+        slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+        return slug or uuid.uuid4().hex
+
+    def get_prompt_presets(self) -> List[PromptPreset]:
+        """Expose loaded prompt presets."""
+
+        return list(self._prompt_presets)
+
+    def apply_prompt_preset(self, preset_value: Optional[str], prompt: Optional[str]) -> tuple[str, Optional[str]]:
+        """Return prompt updated with preset tags and the preset name used."""
+
+        if not preset_value:
+            return prompt or "", None
+
+        preset = self._prompt_preset_lookup.get(preset_value)
+        if not preset:
+            logger.warning("Prompt preset '%s' not found; using original prompt", preset_value)
+            return prompt or "", None
+
+        combined = preset.apply(prompt)
+        return combined, preset.name
 
     def get_resolution_presets(self) -> List[Tuple[str, str]]:
         """Return configured resolution presets as (label, value) tuples."""

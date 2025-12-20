@@ -11,6 +11,10 @@ def rgen_command(bot):
         app_commands.Choice(name=label, value=value)
         for label, value in bot.workflow_manager.get_resolution_presets()[:25]
     ]
+    preset_choices = [
+        app_commands.Choice(name=preset.name, value=preset.value)
+        for preset in bot.workflow_manager.get_prompt_presets()[:25]
+    ]
 
     @app_commands.command(
         name="rgen",
@@ -18,6 +22,7 @@ def rgen_command(bot):
     )
     @app_commands.describe(
         prompt="Description of the image you want to create",
+        prompt_preset="Select a prompt preset (optional)",
         resolution="Select the output resolution (optional)",
         workflow="The workflow to use (optional)",
         settings="Additional settings (optional)"
@@ -25,6 +30,7 @@ def rgen_command(bot):
     async def rgen(
             interaction: discord.Interaction,
             prompt: str,
+            prompt_preset: Optional[app_commands.Choice[str]] = None,
             resolution: Optional[app_commands.Choice[str]] = None,
             workflow: Optional[str] = None,
             settings: Optional[str] = None
@@ -37,10 +43,13 @@ def rgen_command(bot):
             workflow,
             settings,
             resolution=selected_resolution,
+            prompt_preset=prompt_preset.value if prompt_preset else None,
         )
 
     if resolution_choices:
         rgen = app_commands.choices(resolution=resolution_choices)(rgen)
+    if preset_choices:
+        rgen = app_commands.choices(prompt_preset=preset_choices)(rgen)
 
     return rgen
 
@@ -55,6 +64,7 @@ def reforge_command(bot):
     @app_commands.describe(
         image="The image to reforge",
         prompt="Description of the changes you want to make",
+        prompt_preset="Select a prompt preset (optional)",
         workflow="The workflow to use (optional)",
         settings="Additional settings (optional)"
     )
@@ -62,6 +72,7 @@ def reforge_command(bot):
             interaction: discord.Interaction,
             image: discord.Attachment,
             prompt: str,
+            prompt_preset: Optional[app_commands.Choice[str]] = None,
             workflow: Optional[str] = None,
             settings: Optional[str] = None
     ):
@@ -71,6 +82,7 @@ def reforge_command(bot):
             prompt,
             workflow,
             settings,
+            prompt_preset=prompt_preset.value if prompt_preset else None,
             input_image=image,
         )
 
@@ -87,6 +99,7 @@ def upscale_command(bot):
     @app_commands.describe(
         image="The image to upscale",
         prompt="Description of the changes you want to make",
+        prompt_preset="Select a prompt preset (optional)",
         workflow="The workflow to use (optional)",
         settings="Additional settings (optional)"
     )
@@ -94,6 +107,7 @@ def upscale_command(bot):
             interaction: discord.Interaction,
             image: discord.Attachment,
             prompt: str,
+            prompt_preset: Optional[app_commands.Choice[str]] = None,
             workflow: Optional[str] = None,
             settings: Optional[str] = None
     ):
@@ -103,6 +117,7 @@ def upscale_command(bot):
             prompt,
             workflow,
             settings,
+            prompt_preset=prompt_preset.value if prompt_preset else None,
             input_image=image,
         )
 
