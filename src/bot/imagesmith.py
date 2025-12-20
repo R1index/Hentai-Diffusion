@@ -1124,6 +1124,9 @@ class ComfyUIBot(commands.Bot):
         user_id = str(interaction.user.id)
         self._reset_counts_if_needed()
 
+        user_global_name = getattr(interaction.user, "global_name", None)
+        logger.info("gen[%s] global_name=%s", user_id, user_global_name or "—")
+
         if user_id in self.blocked_users:
             await self._send_blocked_message(interaction)
             return
