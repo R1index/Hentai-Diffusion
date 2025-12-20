@@ -679,12 +679,28 @@ class ComfyUIBot(commands.Bot):
 
             user_id = str(int(payload["user_id"]))
             used = int(payload["generations_used"])
-            limit = int(payload["limit"])
             reset_at = float(payload["reset_at"])
+            tier_info = payload.get("tier", {})
+            limit_raw = tier_info.get("limit", payload.get("limit"))
+            tier_name = tier_info.get("name", "unknown")
+            queue_priority = tier_info.get("queue_priority", 0)
+            max_parallel = tier_info.get("max_parallel", 1)
+            limit = None if limit_raw in (None, -1) else int(limit_raw)
             incoming_last_reset = reset_at - 86400.0
 
             if getattr(self, "last_reset_time", 0) > incoming_last_reset + 2:
                 logger.debug("SYNC skipped — local reset is newer")
+                return
+
+            if limit is None:
+                logger.debug(
+                    "SYNC ignored for unlimited tier • bot=%s user=%s tier=%s priority=%s max_parallel=%s",
+                    src_bot,
+                    user_id,
+                    tier_name,
+                    queue_priority,
+                    max_parallel,
+                )
                 return
 
             self.user_generation_counts[user_id] = used
@@ -692,11 +708,14 @@ class ComfyUIBot(commands.Bot):
             self._save_generation_counts()
 
             logger.info(
-                "SYNC applied from bot %s → user %s: %s/%s",
+                "SYNC applied from bot %s → user %s tier=%s: %s/%s (priority=%s max_parallel=%s)",
                 src_bot,
                 user_id,
+                tier_name,
                 used,
                 limit,
+                queue_priority,
+                max_parallel,
             )
 
         except Exception as exc:  # pragma: no cover - defensive
@@ -802,7 +821,17 @@ class ComfyUIBot(commands.Bot):
             if expiry <= now:
                 self._sync_seen.pop(key, None)
 
-    async def _publish_limit_update(self, user_id: int, used: int, limit: int, reset_at: float) -> None:
+    async def _publish_limit_update(
+        self,
+        *,
+        user_id: int,
+        used: int,
+        limit: Optional[int],
+        reset_at: float,
+        tier_name: str,
+        queue_priority: int,
+        max_parallel: int,
+    ) -> None:
         try:
             channel = self.get_channel(self.SYNC_CHANNEL_ID)
             if not channel:
@@ -820,8 +849,14 @@ class ComfyUIBot(commands.Bot):
                 "source_bot_id": self.user.id if self.user else 0,
                 "user_id": int(user_id),
                 "generations_used": int(used),
-                "limit": int(limit),
+                "limit": None if limit is None else int(limit),
                 "reset_at": float(reset_at),
+                "tier": {
+                    "name": tier_name,
+                    "limit": None if limit is None else int(limit),
+                    "queue_priority": int(queue_priority),
+                    "max_parallel": int(max_parallel),
+                },
             }
             wrapper = {"payload": payload, "sig": self._sync_sign(payload)}
             await channel.send(self.SYNC_PREFIX + self._sync_canon(wrapper))
@@ -1071,6 +1106,9 @@ class ComfyUIBot(commands.Bot):
                             used=int(self.user_generation_counts[user_id]),
                             limit=limit,
                             reset_at=float(self.last_reset_time + 86400.0),
+                            tier_name=tier.name,
+                            queue_priority=tier.queue_priority,
+                            max_parallel=tier.max_parallel_generations,
                         )
                     )
                 except Exception as exc:  # pragma: no cover - defensive
@@ -1476,6 +1514,9 @@ class ComfyUIBot(commands.Bot):
                         used=new_value,
                         limit=context.daily_limit or self._get_public_tier().daily_limit or 0,
                         reset_at=float(self.last_reset_time + 86400.0),
+                        tier_name=context.tier.name,
+                        queue_priority=context.tier.queue_priority,
+                        max_parallel=context.tier.max_parallel_generations,
                     )
                 )
             except Exception as exc:  # pragma: no cover - defensive
