@@ -27,25 +27,29 @@ class GenerationQueue:
     """Manages queued generation requests."""
 
     def __init__(self) -> None:
-        self._queue: "asyncio.Queue[QueuedGeneration]" = asyncio.Queue()
+        self._queue: "asyncio.PriorityQueue[tuple[int, int, QueuedGeneration]]" = asyncio.PriorityQueue()
         self._worker: Optional[asyncio.Task[None]] = None
         self._current: Optional[QueuedGeneration] = None
+        self._counter: int = 0
 
     async def add_to_queue(
         self,
         generation_func: Callable[..., Awaitable[None]],
         context: "GenerationContext",
         *args,
+        priority: int = 0,
         **kwargs,
     ) -> None:
         """Add a new generation request to the queue."""
 
         job = QueuedGeneration(generation_func, args, kwargs, context)
-        await self._queue.put(job)
+        self._counter += 1
+        await self._queue.put((-priority, self._counter, job))
         logger.info(
-            "Queue: added request for user %s • size=%d",
+            "Queue: added request for user %s • size=%d • priority=%d",
             context.user_id,
             self._queue.qsize(),
+            priority,
         )
 
         if not self._worker or self._worker.done():
@@ -55,7 +59,7 @@ class GenerationQueue:
         """Process queued generation requests sequentially."""
 
         while True:
-            job = await self._queue.get()
+            _, _, job = await self._queue.get()
             self._current = job
 
             if job.context.cancel_event.is_set():
@@ -94,14 +98,15 @@ class GenerationQueue:
         """Remove a pending job from the queue if it hasn't started yet."""
 
         removed = False
-        pending: list[QueuedGeneration] = []
+        pending: list[tuple[int, int, QueuedGeneration]] = []
 
         while True:
             try:
-                job = self._queue.get_nowait()
+                entry = self._queue.get_nowait()
             except QueueEmpty:
                 break
 
+            _, _, job = entry
             if job.context is context:
                 removed = True
                 logger.info(
@@ -111,11 +116,11 @@ class GenerationQueue:
                 self._queue.task_done()
                 continue
 
-            pending.append(job)
+            pending.append(entry)
             self._queue.task_done()
 
-        for job in pending:
-            self._queue.put_nowait(job)
+        for entry in pending:
+            self._queue.put_nowait(entry)
 
         return removed
 
