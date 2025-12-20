@@ -66,6 +66,7 @@ class GenerationContext:
     tier: RoleTier = field(default_factory=lambda: RoleTier(0, "Public", None, 25, 0, 1))
     daily_limit: Optional[int] = None
     counted_usage: bool = False
+    slot_counted: bool = False
     completed: bool = False
     cancelled_notified: bool = False
     finalized: bool = False
@@ -101,6 +102,7 @@ class ComfyUIBot(commands.Bot):
 
         # Generation tracking
         self.active_generations: Dict[str, List[GenerationContext]] = defaultdict(list)
+        self.synced_active_slots: Dict[str, int] = defaultdict(int)
 
         # Spoiler handling
         self._spoiler_tags: Set[str] = set()
@@ -330,6 +332,9 @@ class ComfyUIBot(commands.Bot):
     def _get_active_contexts(self, user_id: str) -> List[GenerationContext]:
         contexts = self.active_generations.get(user_id, [])
         return [ctx for ctx in contexts if not ctx.finalized]
+
+    def _get_remote_active_slots(self, user_id: str) -> int:
+        return max(0, int(self.synced_active_slots.get(user_id, 0)))
 
     async def _ensure_manage_guild(self, interaction: discord.Interaction) -> bool:
         perms = getattr(interaction.user, "guild_permissions", None)
@@ -668,6 +673,7 @@ class ComfyUIBot(commands.Bot):
             payload = data["payload"]
             event_id = payload["event_id"]
             src_bot = int(payload["source_bot_id"])
+            kind = payload.get("kind", "limit")
 
             self._sync_prune_seen()
             if event_id in self._sync_seen:
@@ -678,13 +684,34 @@ class ComfyUIBot(commands.Bot):
                 return
 
             user_id = str(int(payload["user_id"]))
-            used = int(payload["generations_used"])
-            reset_at = float(payload["reset_at"])
             tier_info = payload.get("tier", {})
-            limit_raw = tier_info.get("limit", payload.get("limit"))
             tier_name = tier_info.get("name", "unknown")
             queue_priority = tier_info.get("queue_priority", 0)
             max_parallel = tier_info.get("max_parallel", 1)
+
+            if kind == "active_delta":
+                delta = int(payload.get("delta", 0))
+                current = self._get_remote_active_slots(user_id)
+                updated = max(0, current + delta)
+                if updated:
+                    self.synced_active_slots[user_id] = updated
+                else:
+                    self.synced_active_slots.pop(user_id, None)
+
+                logger.info(
+                    "SYNC active slots update from bot %s → user %s tier=%s delta=%s total_remote=%s (max_parallel=%s)",
+                    src_bot,
+                    user_id,
+                    tier_name,
+                    delta,
+                    updated,
+                    max_parallel,
+                )
+                return
+
+            used = int(payload["generations_used"])
+            reset_at = float(payload["reset_at"])
+            limit_raw = tier_info.get("limit", payload.get("limit"))
             limit = None if limit_raw in (None, -1) else int(limit_raw)
             incoming_last_reset = reset_at - 86400.0
 
@@ -831,7 +858,7 @@ class ComfyUIBot(commands.Bot):
         tier_name: str,
         queue_priority: int,
         max_parallel: int,
-    ) -> None:
+        ) -> None:
         try:
             channel = self.get_channel(self.SYNC_CHANNEL_ID)
             if not channel:
@@ -844,6 +871,7 @@ class ComfyUIBot(commands.Bot):
 
             event_id = str(uuid.uuid4())
             payload = {
+                "kind": "limit",
                 "event_id": event_id,
                 "ts": int(self._sync_now()),
                 "source_bot_id": self.user.id if self.user else 0,
@@ -864,6 +892,47 @@ class ComfyUIBot(commands.Bot):
             self._sync_prune_seen()
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("publish_limit_update failed: %s", exc, exc_info=True)
+
+    async def _publish_active_delta(
+        self,
+        *,
+        user_id: int,
+        delta: int,
+        tier_name: str,
+        queue_priority: int,
+        max_parallel: int,
+    ) -> None:
+        try:
+            channel = self.get_channel(self.SYNC_CHANNEL_ID)
+            if not channel:
+                try:
+                    channel = await self.fetch_channel(self.SYNC_CHANNEL_ID)
+                except Exception:
+                    channel = None
+            if not channel:
+                return
+
+            event_id = str(uuid.uuid4())
+            payload = {
+                "kind": "active_delta",
+                "event_id": event_id,
+                "ts": int(self._sync_now()),
+                "source_bot_id": self.user.id if self.user else 0,
+                "user_id": int(user_id),
+                "delta": int(delta),
+                "tier": {
+                    "name": tier_name,
+                    "limit": None,
+                    "queue_priority": int(queue_priority),
+                    "max_parallel": int(max_parallel),
+                },
+            }
+            wrapper = {"payload": payload, "sig": self._sync_sign(payload)}
+            await channel.send(self.SYNC_PREFIX + self._sync_canon(wrapper))
+            self._sync_seen[event_id] = self._sync_now() + self._sync_seen_ttl
+            self._sync_prune_seen()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error("publish_active_delta failed: %s", exc, exc_info=True)
 
     # ------------------------------------------------------------------
     # Commands
@@ -1053,11 +1122,12 @@ class ComfyUIBot(commands.Bot):
 
         tier = await self._determine_user_tier(interaction)
         active_contexts = self._get_active_contexts(user_id)
-        if len(active_contexts) >= tier.max_parallel_generations:
+        global_active = len(active_contexts) + self._get_remote_active_slots(user_id)
+        if global_active >= tier.max_parallel_generations:
             await self._send_active_generation_message(
                 interaction,
                 max_allowed=tier.max_parallel_generations,
-                active_count=len(active_contexts),
+                active_count=global_active,
             )
             return
 
@@ -1115,6 +1185,19 @@ class ComfyUIBot(commands.Bot):
                     logger.debug("SYNC publish skipped: %s", exc)
 
             self.active_generations[user_id].append(context)
+            context.slot_counted = True
+            try:
+                asyncio.create_task(
+                    self._publish_active_delta(
+                        user_id=int(user_id),
+                        delta=1,
+                        tier_name=tier.name,
+                        queue_priority=tier.queue_priority,
+                        max_parallel=tier.max_parallel_generations,
+                    )
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("SYNC active publish skipped: %s", exc)
             await self._process_generation(
                 interaction,
                 workflow_type,
@@ -1522,6 +1605,20 @@ class ComfyUIBot(commands.Bot):
             except Exception as exc:  # pragma: no cover - defensive
                 logger.debug("SYNC publish rollback skipped: %s", exc)
 
+        if context.slot_counted:
+            try:
+                asyncio.create_task(
+                    self._publish_active_delta(
+                        user_id=int(context.user_id),
+                        delta=-1,
+                        tier_name=context.tier.name,
+                        queue_priority=context.tier.queue_priority,
+                        max_parallel=context.tier.max_parallel_generations,
+                    )
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("SYNC active rollback skipped: %s", exc)
+
     async def _send_blocked_message(self, interaction: discord.Interaction) -> None:
         embed = ui_embeds.build_notice_embed(
             title="🚫 Access restricted",
@@ -1541,7 +1638,7 @@ class ComfyUIBot(commands.Bot):
             title="⏳ Already processing",
             description=(
                 "Please wait for your existing generations to finish before starting a new one.\n"
-                f"Slots used: **{active_count}** / **{max_allowed}**"
+                f"Slots in use across all bots: **{active_count}** / **{max_allowed}**"
             ),
             color=ui_embeds.WARNING_COLOR,
         )
