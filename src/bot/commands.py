@@ -11,10 +11,15 @@ def rgen_command(bot):
         app_commands.Choice(name=label, value=value)
         for label, value in bot.workflow_manager.get_resolution_presets()[:25]
     ]
-    preset_choices = [
-        app_commands.Choice(name=preset.name, value=preset.value)
-        for preset in bot.workflow_manager.get_prompt_presets()[:25]
-    ]
+
+    async def _prompt_preset_autocomplete(
+            interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        presets = bot.workflow_manager.search_prompt_presets(current, limit=25)
+        return [
+            app_commands.Choice(name=preset.name, value=preset.value)
+            for preset in presets
+        ]
 
     @app_commands.command(
         name="rgen",
@@ -30,7 +35,7 @@ def rgen_command(bot):
     async def rgen(
             interaction: discord.Interaction,
             prompt: str,
-            prompt_preset: Optional[app_commands.Choice[str]] = None,
+            prompt_preset: Optional[str] = None,
             resolution: Optional[app_commands.Choice[str]] = None,
             workflow: Optional[str] = None,
             settings: Optional[str] = None
@@ -43,13 +48,12 @@ def rgen_command(bot):
             workflow,
             settings,
             resolution=selected_resolution,
-            prompt_preset=prompt_preset.value if prompt_preset else None,
+            prompt_preset=prompt_preset,
         )
 
     if resolution_choices:
         rgen = app_commands.choices(resolution=resolution_choices)(rgen)
-    if preset_choices:
-        rgen = app_commands.choices(prompt_preset=preset_choices)(rgen)
+    rgen = app_commands.autocomplete(prompt_preset=_prompt_preset_autocomplete)(rgen)
 
     return rgen
 
@@ -72,7 +76,7 @@ def reforge_command(bot):
             interaction: discord.Interaction,
             image: discord.Attachment,
             prompt: str,
-            prompt_preset: Optional[app_commands.Choice[str]] = None,
+            prompt_preset: Optional[str] = None,
             workflow: Optional[str] = None,
             settings: Optional[str] = None
     ):
@@ -82,11 +86,11 @@ def reforge_command(bot):
             prompt,
             workflow,
             settings,
-            prompt_preset=prompt_preset.value if prompt_preset else None,
+            prompt_preset=prompt_preset,
             input_image=image,
         )
 
-    return reforge
+    return app_commands.autocomplete(prompt_preset=_prompt_preset_autocomplete)(reforge)
 
 
 def upscale_command(bot):
@@ -107,7 +111,7 @@ def upscale_command(bot):
             interaction: discord.Interaction,
             image: discord.Attachment,
             prompt: str,
-            prompt_preset: Optional[app_commands.Choice[str]] = None,
+            prompt_preset: Optional[str] = None,
             workflow: Optional[str] = None,
             settings: Optional[str] = None
     ):
@@ -117,11 +121,11 @@ def upscale_command(bot):
             prompt,
             workflow,
             settings,
-            prompt_preset=prompt_preset.value if prompt_preset else None,
+            prompt_preset=prompt_preset,
             input_image=image,
         )
 
-    return upscale
+    return app_commands.autocomplete(prompt_preset=_prompt_preset_autocomplete)(upscale)
 
 
 def workflows_command(bot):

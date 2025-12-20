@@ -56,6 +56,7 @@ class GenerationContext:
     is_donor: bool
     prompt: Optional[str] = None
     prompt_preset_name: Optional[str] = None
+    prompt_preset_tags: Optional[str] = None
     settings: Optional[str] = None
     resolution: Optional[str] = None
     started_at: float = field(default_factory=time.time)
@@ -1161,7 +1162,7 @@ class ComfyUIBot(commands.Bot):
         is_supporter = tier.daily_limit is None
         is_donor = is_supporter or user_id in self.donor_users
 
-        final_prompt, preset_name = self.workflow_manager.apply_prompt_preset(prompt_preset, prompt)
+        final_prompt, preset_name, preset_tags = self.workflow_manager.apply_prompt_preset(prompt_preset, prompt)
 
         context = GenerationContext(
             user_id=user_id,
@@ -1172,6 +1173,7 @@ class ComfyUIBot(commands.Bot):
             daily_limit=tier.daily_limit,
             prompt=final_prompt,
             prompt_preset_name=preset_name,
+            prompt_preset_tags=preset_tags,
             settings=settings,
             resolution=resolution,
         )
@@ -1518,7 +1520,11 @@ class ComfyUIBot(commands.Bot):
         if extra_fields:
             fields.extend(extra_fields)
         if context.prompt_preset_name:
-            fields.append(("🏷️ Preset", context.prompt_preset_name, True))
+            preset_value = context.prompt_preset_name
+            if context.prompt_preset_tags:
+                tags_preview = self._truncate_field(context.prompt_preset_tags, 900)
+                preset_value = f"{context.prompt_preset_name}\n{tags_preview}"
+            fields.append(("🏷️ Preset", preset_value, False))
         if context.resolution:
             fields.append(("🖼️ Resolution", context.resolution, True))
         fields.append(("🕒 Started", f"<t:{int(context.started_at)}:R>", True))
@@ -1534,6 +1540,11 @@ class ComfyUIBot(commands.Bot):
             usage=self._usage_text(context),
             fields=fields,
         )
+
+    def _truncate_field(self, value: str, limit: int = 900) -> str:
+        if len(value) <= limit:
+            return value
+        return value[: limit - 1] + "…"
 
     def _usage_text(self, context: GenerationContext) -> Optional[str]:
         if context.is_donor:

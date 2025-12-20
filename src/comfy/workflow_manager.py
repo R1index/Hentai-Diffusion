@@ -145,19 +145,37 @@ class WorkflowManager:
 
         return list(self._prompt_presets)
 
-    def apply_prompt_preset(self, preset_value: Optional[str], prompt: Optional[str]) -> tuple[str, Optional[str]]:
-        """Return prompt updated with preset tags and the preset name used."""
+    def search_prompt_presets(self, query: str = "", *, limit: int = 25) -> List[PromptPreset]:
+        """Return prompt presets filtered by query."""
+
+        normalized = (query or "").strip().lower()
+        if not normalized:
+            return self._prompt_presets[:limit]
+
+        matches = [
+            preset
+            for preset in self._prompt_presets
+            if normalized in preset.name.lower() or normalized in preset.tags.lower()
+        ]
+        return matches[:limit]
+
+    def apply_prompt_preset(
+        self,
+        preset_value: Optional[str],
+        prompt: Optional[str],
+    ) -> tuple[str, Optional[str], Optional[str]]:
+        """Return prompt updated with preset tags, plus preset name and tags."""
 
         if not preset_value:
-            return prompt or "", None
+            return prompt or "", None, None
 
         preset = self._prompt_preset_lookup.get(preset_value)
         if not preset:
             logger.warning("Prompt preset '%s' not found; using original prompt", preset_value)
-            return prompt or "", None
+            return prompt or "", None, None
 
         combined = preset.apply(prompt)
-        return combined, preset.name
+        return combined, preset.name, preset.tags
 
     def get_resolution_presets(self) -> List[Tuple[str, str]]:
         """Return configured resolution presets as (label, value) tuples."""
