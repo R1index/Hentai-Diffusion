@@ -1,0 +1,26 @@
+[
+  {
+    "name": "None",
+    "lora": "None"
+  },
+  {
+    "name": "Samekosaba",
+    "lora": "samekosaba"
+  },
+  {
+    "name": "Dokiyuri",
+    "lora": "dokiyuri"
+  },
+  {
+    "name": "PumpkinSpiceLatte",
+    "lora": "PumpkinSpiceLatte"
+  },
+  {
+    "name": "Butterchalk",
+    "lora": "butterchalk"
+  },
+  {
+    "name": "phoebe",
+    "lora": "phoebe.safetensors"
+  }
+]

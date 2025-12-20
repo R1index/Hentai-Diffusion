@@ -12,12 +12,43 @@ def rgen_command(bot):
         for label, value in bot.workflow_manager.get_resolution_presets()[:25]
     ]
 
+    async def _prompt_preset_autocomplete(
+            interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        presets = bot.workflow_manager.search_prompt_presets(current, limit=25)
+        return [
+            app_commands.Choice(name=preset.name, value=preset.value)
+            for preset in presets
+        ]
+
+    async def _model_preset_autocomplete(
+            interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        presets = bot.workflow_manager.search_model_presets(current, limit=25)
+        return [
+            app_commands.Choice(name=preset.name, value=preset.value)
+            for preset in presets
+        ]
+
+    async def _lora_preset_autocomplete(
+            interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        presets = bot.workflow_manager.search_lora_presets(current, limit=25)
+        return [
+            app_commands.Choice(name=preset.name, value=preset.value)
+            for preset in presets
+        ]
+
     @app_commands.command(
         name="rgen",
         description="Forge an image using text-to-image"
     )
     @app_commands.describe(
         prompt="Description of the image you want to create",
+        prompt_preset="Select a prompt preset (optional)",
+        model_preset="Select a model preset (optional)",
+        lora_preset="Select a LoRA preset (optional)",
+        seed="Seed value (optional)",
         resolution="Select the output resolution (optional)",
         workflow="The workflow to use (optional)",
         settings="Additional settings (optional)"
@@ -25,6 +56,10 @@ def rgen_command(bot):
     async def rgen(
             interaction: discord.Interaction,
             prompt: str,
+            prompt_preset: Optional[str] = None,
+            model_preset: Optional[str] = None,
+            lora_preset: Optional[str] = None,
+            seed: Optional[int] = None,
             resolution: Optional[app_commands.Choice[str]] = None,
             workflow: Optional[str] = None,
             settings: Optional[str] = None
@@ -37,10 +72,17 @@ def rgen_command(bot):
             workflow,
             settings,
             resolution=selected_resolution,
+            prompt_preset=prompt_preset,
+            model_preset=model_preset,
+            lora_preset=lora_preset,
+            seed=seed,
         )
 
     if resolution_choices:
         rgen = app_commands.choices(resolution=resolution_choices)(rgen)
+    rgen = app_commands.autocomplete(prompt_preset=_prompt_preset_autocomplete)(rgen)
+    rgen = app_commands.autocomplete(model_preset=_model_preset_autocomplete)(rgen)
+    rgen = app_commands.autocomplete(lora_preset=_lora_preset_autocomplete)(rgen)
 
     return rgen
 
@@ -55,6 +97,10 @@ def reforge_command(bot):
     @app_commands.describe(
         image="The image to reforge",
         prompt="Description of the changes you want to make",
+        prompt_preset="Select a prompt preset (optional)",
+        model_preset="Select a model preset (optional)",
+        lora_preset="Select a LoRA preset (optional)",
+        seed="Seed value (optional)",
         workflow="The workflow to use (optional)",
         settings="Additional settings (optional)"
     )
@@ -62,6 +108,10 @@ def reforge_command(bot):
             interaction: discord.Interaction,
             image: discord.Attachment,
             prompt: str,
+            prompt_preset: Optional[str] = None,
+            model_preset: Optional[str] = None,
+            lora_preset: Optional[str] = None,
+            seed: Optional[int] = None,
             workflow: Optional[str] = None,
             settings: Optional[str] = None
     ):
@@ -71,10 +121,16 @@ def reforge_command(bot):
             prompt,
             workflow,
             settings,
+            prompt_preset=prompt_preset,
+            model_preset=model_preset,
+            lora_preset=lora_preset,
+            seed=seed,
             input_image=image,
         )
 
-    return reforge
+    reforge = app_commands.autocomplete(prompt_preset=_prompt_preset_autocomplete)(reforge)
+    reforge = app_commands.autocomplete(model_preset=_model_preset_autocomplete)(reforge)
+    return app_commands.autocomplete(lora_preset=_lora_preset_autocomplete)(reforge)
 
 
 def upscale_command(bot):
@@ -87,6 +143,10 @@ def upscale_command(bot):
     @app_commands.describe(
         image="The image to upscale",
         prompt="Description of the changes you want to make",
+        prompt_preset="Select a prompt preset (optional)",
+        model_preset="Select a model preset (optional)",
+        lora_preset="Select a LoRA preset (optional)",
+        seed="Seed value (optional)",
         workflow="The workflow to use (optional)",
         settings="Additional settings (optional)"
     )
@@ -94,6 +154,10 @@ def upscale_command(bot):
             interaction: discord.Interaction,
             image: discord.Attachment,
             prompt: str,
+            prompt_preset: Optional[str] = None,
+            model_preset: Optional[str] = None,
+            lora_preset: Optional[str] = None,
+            seed: Optional[int] = None,
             workflow: Optional[str] = None,
             settings: Optional[str] = None
     ):
@@ -103,10 +167,16 @@ def upscale_command(bot):
             prompt,
             workflow,
             settings,
+            prompt_preset=prompt_preset,
+            model_preset=model_preset,
+            lora_preset=lora_preset,
+            seed=seed,
             input_image=image,
         )
 
-    return upscale
+    upscale = app_commands.autocomplete(prompt_preset=_prompt_preset_autocomplete)(upscale)
+    upscale = app_commands.autocomplete(model_preset=_model_preset_autocomplete)(upscale)
+    return app_commands.autocomplete(lora_preset=_lora_preset_autocomplete)(upscale)
 
 
 def workflows_command(bot):

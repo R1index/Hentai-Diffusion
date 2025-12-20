@@ -55,8 +55,13 @@ class GenerationContext:
     workflow_type: str
     is_donor: bool
     prompt: Optional[str] = None
+    prompt_preset_name: Optional[str] = None
+    prompt_preset_tags: Optional[str] = None
+    model_preset_name: Optional[str] = None
+    lora_preset_name: Optional[str] = None
     settings: Optional[str] = None
     resolution: Optional[str] = None
+    seed: Optional[int] = None
     started_at: float = field(default_factory=time.time)
     workflow_name: Optional[str] = None
     message: Optional[discord.Message] = None
@@ -1119,7 +1124,12 @@ class ComfyUIBot(commands.Bot):
         workflow: Optional[str] = None,
         settings: Optional[str] = None,
         resolution: Optional[str] = None,
+        prompt_preset: Optional[str] = None,
+        model_preset: Optional[str] = None,
+        lora_preset: Optional[str] = None,
+        seed: Optional[int] = None,
         input_image: Optional[discord.Attachment] = None,
+        **_: Any,
     ) -> None:
         user_id = str(interaction.user.id)
         self._reset_counts_if_needed()
@@ -1158,6 +1168,23 @@ class ComfyUIBot(commands.Bot):
         is_supporter = tier.daily_limit is None
         is_donor = is_supporter or user_id in self.donor_users
 
+        final_prompt, preset_name, preset_tags = self.workflow_manager.apply_prompt_preset(prompt_preset, prompt)
+        model_name, model_preset_name = self.workflow_manager.apply_model_preset(model_preset)
+        lora_name, lora_preset_name = self.workflow_manager.apply_lora_preset(lora_preset)
+
+        preset_configs: list[str] = []
+        if model_name:
+            preset_configs.append(f"config(model={model_name})")
+        if seed is not None:
+            preset_configs.append(f"config(seed={seed})")
+        if lora_name:
+            preset_configs.append(f"config(lora={lora_name})")
+
+        settings_with_presets = settings
+        if preset_configs:
+            joined = ";".join(preset_configs)
+            settings_with_presets = f"{settings};{joined}" if settings else joined
+
         context = GenerationContext(
             user_id=user_id,
             user=interaction.user,
@@ -1165,12 +1192,17 @@ class ComfyUIBot(commands.Bot):
             is_donor=is_donor,
             tier=tier,
             daily_limit=tier.daily_limit,
-            prompt=prompt,
-            settings=settings,
+            prompt=final_prompt,
+            prompt_preset_name=preset_name,
+            prompt_preset_tags=preset_tags,
+            model_preset_name=model_preset_name,
+            lora_preset_name=lora_preset_name,
+            settings=settings_with_presets,
             resolution=resolution,
+            seed=seed,
         )
 
-        context.force_spoiler = self._prompt_contains_spoiler_tag(prompt)
+        context.force_spoiler = self._prompt_contains_spoiler_tag(final_prompt)
 
         try:
             if tier.daily_limit is not None:
@@ -1203,9 +1235,9 @@ class ComfyUIBot(commands.Bot):
             context.slot_counted = True
             try:
                 asyncio.create_task(
-                    self._publish_active_delta(
-                        user_id=int(user_id),
-                        delta=1,
+                self._publish_active_delta(
+                    user_id=int(user_id),
+                    delta=1,
                         tier_name=tier.name,
                         queue_priority=tier.queue_priority,
                         max_parallel=tier.max_parallel_generations,
@@ -1216,9 +1248,9 @@ class ComfyUIBot(commands.Bot):
             await self._process_generation(
                 interaction,
                 workflow_type,
-                prompt,
+                final_prompt,
                 workflow,
-                settings,
+                settings_with_presets,
                 resolution,
                 input_image,
                 context,
@@ -1511,8 +1543,16 @@ class ComfyUIBot(commands.Bot):
         fields: List[ui_embeds.EmbedField] = [("🎯 Mode", context.workflow_type.upper(), True)]
         if extra_fields:
             fields.extend(extra_fields)
+        if context.prompt_preset_name:
+            fields.append(("🏷️ Preset", context.prompt_preset_name, True))
+        if context.model_preset_name:
+            fields.append(("🧠 Model", context.model_preset_name, True))
+        if context.lora_preset_name:
+            fields.append(("🧩 LoRA", context.lora_preset_name, True))
         if context.resolution:
             fields.append(("🖼️ Resolution", context.resolution, True))
+        if context.seed is not None:
+            fields.append(("🌱 Seed", str(context.seed), True))
         fields.append(("🕒 Started", f"<t:{int(context.started_at)}:R>", True))
 
         return ui_embeds.build_generation_embed(

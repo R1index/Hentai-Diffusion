@@ -1,0 +1,14 @@
+[
+  {
+    "name": "Aozora XL Vpred",
+    "model": "aozoraXLVpred_v01AlphaVpred.safetensors"
+  },
+  {
+    "name": "Stable Diffusion 3.5 (example)",
+    "model": "sd3.5_large.safetensors"
+  },
+  {
+    "name": "RealVis XL (example)",
+    "model": "realvisxlV40_v40Bakedvae.safetensors"
+  }
+]
