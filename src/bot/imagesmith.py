@@ -1520,11 +1520,7 @@ class ComfyUIBot(commands.Bot):
         if extra_fields:
             fields.extend(extra_fields)
         if context.prompt_preset_name:
-            preset_value = context.prompt_preset_name
-            if context.prompt_preset_tags:
-                tags_preview = self._truncate_field(context.prompt_preset_tags, 900)
-                preset_value = f"{context.prompt_preset_name}\n{tags_preview}"
-            fields.append(("🏷️ Preset", preset_value, False))
+            fields.append(("🏷️ Preset", context.prompt_preset_name, True))
         if context.resolution:
             fields.append(("🖼️ Resolution", context.resolution, True))
         fields.append(("🕒 Started", f"<t:{int(context.started_at)}:R>", True))
@@ -1540,11 +1536,6 @@ class ComfyUIBot(commands.Bot):
             usage=self._usage_text(context),
             fields=fields,
         )
-
-    def _truncate_field(self, value: str, limit: int = 900) -> str:
-        if len(value) <= limit:
-            return value
-        return value[: limit - 1] + "…"
 
     def _usage_text(self, context: GenerationContext) -> Optional[str]:
         if context.is_donor:
