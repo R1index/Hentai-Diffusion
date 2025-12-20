@@ -1122,6 +1122,7 @@ class ComfyUIBot(commands.Bot):
         resolution: Optional[str] = None,
         prompt_preset: Optional[str] = None,
         input_image: Optional[discord.Attachment] = None,
+        **_: Any,
     ) -> None:
         user_id = str(interaction.user.id)
         self._reset_counts_if_needed()
