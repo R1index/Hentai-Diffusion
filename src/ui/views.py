@@ -23,10 +23,16 @@ class ImageView(discord.ui.View):
 class GenerationView(discord.ui.View):
     """View with controls for an active generation."""
 
-    def __init__(self, owner_id: int, cancel_callback: Callable[[discord.Interaction], Awaitable[None]]):
+    def __init__(
+        self,
+        owner_id: int,
+        cancel_callback: Callable[[discord.Interaction], Awaitable[None]],
+        copy_callback: Callable[[discord.Interaction], Awaitable[None]],
+    ):
         super().__init__(timeout=None)
         self.owner_id = owner_id
         self._cancel_callback = cancel_callback
+        self._copy_callback = copy_callback
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger, emoji="🛑")
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):  # type: ignore[override]
@@ -38,6 +44,10 @@ class GenerationView(discord.ui.View):
             return
 
         await self._cancel_callback(interaction)
+
+    @discord.ui.button(label="Copy", style=discord.ButtonStyle.secondary, emoji="📋")
+    async def copy(self, interaction: discord.Interaction, button: discord.ui.Button):  # type: ignore[override]
+        await self._copy_callback(interaction)
 
     def disable(self) -> None:
         """Disable all controls in the view."""
