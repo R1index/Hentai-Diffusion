@@ -677,10 +677,47 @@ class WorkflowManager:
         )
         return workflow_json
 
+    def _find_seed_node(self, workflow_json: dict) -> Optional[str]:
+        """Attempt to find the first node that accepts a 'seed' input."""
+
+        for key, node in workflow_json.items():
+            if not isinstance(node, dict):
+                continue
+            inputs = node.get("inputs")
+            if isinstance(inputs, dict) and "seed" in inputs:
+                return key
+        return None
+
+    def apply_seed(self, workflow_json: dict, workflow_config: dict, workflow_name: str,
+                   seed: Optional[int]) -> dict:
+        """Apply a specific seed if provided."""
+
+        if seed is None:
+            return workflow_json
+
+        node_id = workflow_config.get("seed_node_id")
+        if node_id is None:
+            node_id = self._find_seed_node(workflow_json)
+
+        if node_id is None:
+            logger.debug("No seed node found for workflow '%s'; skipping seed override", workflow_name)
+            return workflow_json
+
+        node_key = str(node_id)
+        node = workflow_json.get(node_key)
+        if not node or "inputs" not in node:
+            logger.debug("Seed node '%s' missing or has no inputs in workflow '%s'", node_key, workflow_name)
+            return workflow_json
+
+        node["inputs"]["seed"] = int(seed)
+        logger.debug("Applied seed '%s' to node '%s' in workflow '%s'", seed, node_key, workflow_name)
+        return workflow_json
+
     def prepare_workflow(self, workflow_name: str, prompt: str = None,
                          settings: Optional[str] = None,
                          resolution: Optional[str] = None,
-                         image_data: Optional[bytes] = None) -> dict:
+                         image_data: Optional[bytes] = None,
+                         seed: Optional[int] = None) -> dict:
         """Prepare a workflow with prompt, settings, and image data"""
         try:
             workflow_config = self.get_workflow(workflow_name)
@@ -704,6 +741,14 @@ class WorkflowManager:
                 workflow_config,
                 workflow_name,
                 resolution,
+            )
+
+            # Apply explicit seed if provided
+            workflow_json = self.apply_seed(
+                workflow_json,
+                workflow_config,
+                workflow_name,
+                seed,
             )
 
             # Apply settings

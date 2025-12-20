@@ -1382,6 +1382,8 @@ class ComfyUIBot(commands.Bot):
         context.workflow_name = workflow_name
         context.prompt = prompt
         context.settings = settings
+        if context.seed is None and seed is not None:
+            context.seed = seed
         if resolution:
             context.resolution = resolution
 
@@ -1396,6 +1398,7 @@ class ComfyUIBot(commands.Bot):
                 settings,
                 context.resolution,
                 image_data,
+                seed=context.seed,
             )
 
             if context.cancel_event.is_set():
