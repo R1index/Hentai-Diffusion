@@ -1487,10 +1487,7 @@ class ComfyUIBot(commands.Bot):
         async def on_cancel(interaction: discord.Interaction) -> None:
             await self._handle_cancel_request(context, interaction)
 
-        async def on_copy(interaction: discord.Interaction) -> None:
-            await self._handle_copy_request(context, interaction)
-
-        return GenerationView(context.user.id, on_cancel, on_copy)
+        return GenerationView(context.user.id, on_cancel)
 
     def _determine_status_style(self, status: str, has_image: bool) -> tuple[int, str]:
         if has_image or status.startswith("✅") or status.startswith("🖼"):
@@ -1613,27 +1610,6 @@ class ComfyUIBot(commands.Bot):
         await self._handle_cancelled_generation(context)
         self._finalize_generation_context(context, success=False)
         await interaction.followup.send("Generation cancelled.", ephemeral=True)
-
-    async def _handle_copy_request(self, context: GenerationContext, interaction: discord.Interaction) -> None:
-        """Send the prompt and settings back to any user for easy copying."""
-
-        if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
-
-        prompt_text = context.prompt or "—"
-        settings_text = context.settings or "—"
-        parts = [
-            f"**Prompt:**\n```{prompt_text}```",
-            f"**Settings:**\n```{settings_text}```",
-        ]
-        if context.model_preset_name:
-            parts.append(f"**Model preset:** {context.model_preset_name}")
-        if context.lora_preset_name:
-            parts.append(f"**LoRA preset:** {context.lora_preset_name}")
-        if context.seed is not None:
-            parts.append(f"**Seed:** {context.seed}")
-
-        await interaction.followup.send("\n".join(parts), ephemeral=True)
 
     async def _handle_cancelled_generation(self, context: GenerationContext, *, reason: str = "Generation cancelled by user.") -> None:
         if context.cancelled_notified:
