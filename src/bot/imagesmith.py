@@ -1260,6 +1260,22 @@ class ComfyUIBot(commands.Bot):
                 )
             except Exception as exc:  # pragma: no cover - defensive
                 logger.debug("SYNC active publish skipped: %s", exc)
+
+            self._store_last_request(
+                user_id,
+                {
+                    "workflow_type": workflow_type,
+                    "prompt": final_prompt,
+                    "workflow": workflow,
+                    "settings": settings_with_presets,
+                    "resolution": resolution,
+                    "prompt_preset": prompt_preset,
+                    "model_preset": model_preset,
+                    "lora_preset": lora_preset,
+                    "seed": seed,
+                },
+                requires_image=input_image is not None,
+            )
             await self._process_generation(
                 interaction,
                 workflow_type,
@@ -1349,22 +1365,6 @@ class ComfyUIBot(commands.Bot):
                 self._finalize_generation_context(context, success=False)
                 return
             image_data = await input_image.read()
-
-        self._store_last_request(
-            user_id,
-            {
-                "workflow_type": workflow_type,
-                "prompt": prompt,
-                "workflow": workflow,
-                "settings": settings,
-                "resolution": resolution,
-                "prompt_preset": prompt_preset,
-                "model_preset": model_preset,
-                "lora_preset": lora_preset,
-                "seed": seed,
-            },
-            requires_image=input_image is not None,
-        )
 
         queue_position = self.generation_queue.get_queue_position()
         status = (
