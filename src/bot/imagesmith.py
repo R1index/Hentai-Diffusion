@@ -183,6 +183,8 @@ class ComfyUIBot(commands.Bot):
         self.user_generation_counts: Dict[str, int] = defaultdict(int)
         self.user_generation_stats: Dict[str, Dict[str, Any]] = {}
         self.last_reset_time: float = time.time()
+        self._last_generation_inputs: Dict[str, Dict[str, Dict[str, Any]]] = defaultdict(dict)
+        self._last_generation_inputs_any: Dict[str, Dict[str, Any]] = {}
 
         os.makedirs("data", exist_ok=True)
         self._load_security_lists()
@@ -915,6 +917,42 @@ class ComfyUIBot(commands.Bot):
             if expiry <= now:
                 self._sync_seen.pop(key, None)
 
+    @staticmethod
+    def _normalize_optional(value: Any) -> Any:
+        """Treat empty strings as missing while preserving valid falsy values like 0."""
+
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    def _merge_with_last_inputs(
+        self,
+        user_id: str,
+        workflow_type: str,
+        **current_values: Any,
+    ) -> Dict[str, Any]:
+        """Return merged values using last non-empty inputs for the workflow."""
+
+        type_history = self._last_generation_inputs.get(user_id, {}).get(workflow_type, {})
+        global_history = self._last_generation_inputs_any.get(user_id, {})
+        merged: Dict[str, Any] = {}
+
+        for key, value in current_values.items():
+            normalized = self._normalize_optional(value)
+            if normalized is not None:
+                merged[key] = normalized
+            else:
+                merged[key] = type_history.get(key, global_history.get(key))
+
+        # Persist only the values we can actually reuse next time.
+        stored = {k: v for k, v in {**type_history, **merged}.items() if v is not None}
+        self._last_generation_inputs[user_id][workflow_type] = stored
+        self._last_generation_inputs_any[user_id] = {
+            **self._last_generation_inputs_any.get(user_id, {}),
+            **stored,
+        }
+        return merged
+
     async def _get_sync_channel(self) -> Optional[discord.abc.Messageable]:
         if self._sync_channel_cache:
             return self._sync_channel_cache
@@ -1228,6 +1266,25 @@ class ComfyUIBot(commands.Bot):
 
         is_supporter = tier.daily_limit is None
         is_donor = is_supporter or user_id in self.donor_users
+
+        merged_inputs = self._merge_with_last_inputs(
+            user_id,
+            workflow_type,
+            workflow=workflow,
+            settings=settings,
+            resolution=resolution,
+            prompt_preset=prompt_preset,
+            model_preset=model_preset,
+            lora_preset=lora_preset,
+            seed=seed,
+        )
+        workflow = merged_inputs["workflow"]
+        settings = merged_inputs["settings"]
+        resolution = merged_inputs["resolution"]
+        prompt_preset = merged_inputs["prompt_preset"]
+        model_preset = merged_inputs["model_preset"]
+        lora_preset = merged_inputs["lora_preset"]
+        seed = merged_inputs["seed"]
 
         final_prompt, preset_name, preset_tags = self.workflow_manager.apply_prompt_preset(prompt_preset, prompt)
         model_name, model_preset_name = self.workflow_manager.apply_model_preset(model_preset)
