@@ -76,6 +76,7 @@ class GenerationContext:
     cancelled_notified: bool = False
     finalized: bool = False
     force_spoiler: bool = False
+    processing: bool = False
 
 
 class ComfyUIBot(commands.Bot):
@@ -101,6 +102,7 @@ class ComfyUIBot(commands.Bot):
         self.basic_security = BasicSecurity(self)
         self.comfy_client: Optional[ComfyUIClient] = None
         self.generation_queue = GenerationQueue()
+        self.generation_queue.set_update_callback(self._on_queue_updated)
 
         # Plugin system
         self.plugins: List[Plugin] = []
@@ -108,6 +110,8 @@ class ComfyUIBot(commands.Bot):
         # Generation tracking
         self.active_generations: Dict[str, List[GenerationContext]] = defaultdict(list)
         self.synced_active_slots: Dict[str, int] = defaultdict(int)
+        self._synced_active_expiry: Dict[str, float] = {}
+        self._last_requests: Dict[str, Dict[str, Any]] = {}
         self._sync_channel_cache: Optional[discord.abc.Messageable] = None
 
         # Spoiler handling
@@ -340,7 +344,63 @@ class ComfyUIBot(commands.Bot):
         return [ctx for ctx in contexts if not ctx.finalized]
 
     def _get_remote_active_slots(self, user_id: str) -> int:
+        self._sync_prune_remote_slots()
         return max(0, int(self.synced_active_slots.get(user_id, 0)))
+
+    def _sync_prune_remote_slots(self) -> None:
+        """Drop stale remote slot info to avoid blocking users after desync."""
+
+        now = self._sync_now()
+        expired = [uid for uid, ttl in self._synced_active_expiry.items() if ttl <= now]
+        for uid in expired:
+            self.synced_active_slots.pop(uid, None)
+            self._synced_active_expiry.pop(uid, None)
+
+    async def _on_queue_updated(self) -> None:
+        await self._refresh_queue_views()
+
+    async def _refresh_queue_views(self) -> None:
+        """Dynamically update queue positions for pending generations."""
+
+        pending = self.generation_queue.get_pending_contexts()
+        current = self.generation_queue.current_context
+        total = len(pending) + (1 if current else 0)
+        offset = 1 if current else 0
+        total_display = max(total, 1)
+
+        for idx, ctx in enumerate(pending):
+            if ctx.finalized or ctx.cancel_event.is_set() or ctx.processing:
+                continue
+            if not ctx.message:
+                continue
+
+            position = idx + 1 + offset
+            status = "⏳ Waiting in queue"
+            extra_fields: List[ui_embeds.EmbedField] = [
+                ("📬 Queue position", f"{position}/{total_display}", True),
+                ("👥 In queue", str(total), True),
+            ]
+
+            await self._update_generation_message(
+                ctx,
+                status=status,
+                title="🎨 Generation queued",
+                color=ui_embeds.ACCENT_COLOR,
+                extra_fields=extra_fields,
+            )
+
+    def _store_last_request(
+        self,
+        user_id: str,
+        payload: Dict[str, Any],
+        *,
+        requires_image: bool = False,
+    ) -> None:
+        """Remember the user's latest request for quick reuse via UI."""
+
+        payload = dict(payload)
+        payload["requires_image"] = requires_image
+        self._last_requests[user_id] = payload
 
     async def _ensure_manage_guild(self, interaction: discord.Interaction) -> bool:
         perms = getattr(interaction.user, "guild_permissions", None)
@@ -701,8 +761,10 @@ class ComfyUIBot(commands.Bot):
                 updated = max(0, current + delta)
                 if updated:
                     self.synced_active_slots[user_id] = updated
+                    self._synced_active_expiry[user_id] = self._sync_now() + self._sync_seen_ttl
                 else:
                     self.synced_active_slots.pop(user_id, None)
+                    self._synced_active_expiry.pop(user_id, None)
 
                 logger.info(
                     "SYNC active slots update from bot %s → user %s tier=%s delta=%s total_remote=%s (max_parallel=%s)",
@@ -1246,6 +1308,22 @@ class ComfyUIBot(commands.Bot):
                 )
             except Exception as exc:  # pragma: no cover - defensive
                 logger.debug("SYNC active publish skipped: %s", exc)
+
+            self._store_last_request(
+                user_id,
+                {
+                    "workflow_type": workflow_type,
+                    "prompt": final_prompt,
+                    "workflow": workflow,
+                    "settings": settings_with_presets,
+                    "resolution": resolution,
+                    "prompt_preset": prompt_preset,
+                    "model_preset": model_preset,
+                    "lora_preset": lora_preset,
+                    "seed": seed,
+                },
+                requires_image=input_image is not None,
+            )
             await self._process_generation(
                 interaction,
                 workflow_type,
@@ -1337,11 +1415,8 @@ class ComfyUIBot(commands.Bot):
             image_data = await input_image.read()
 
         queue_position = self.generation_queue.get_queue_position()
-        status = (
-            f"⏳ Waiting in queue • position {queue_position + 1}"
-            if queue_position > 0
-            else "🚀 Preparing your generation…"
-        )
+        total_queue = self.generation_queue.size() + 1
+        status = "⏳ Waiting in queue" if queue_position > 0 else "🚀 Preparing your generation…"
 
         context.view = self._create_generation_view(context)
         embed = self._build_generation_embed(
@@ -1350,9 +1425,8 @@ class ComfyUIBot(commands.Bot):
             title="🎨 Generation queued",
             color=ui_embeds.ACCENT_COLOR,
             extra_fields=[
-                ("📬 Queue position", str(queue_position + 1), True)
-                if queue_position > 0
-                else ("📬 Queue position", "Active", True)
+                ("📬 Queue position", f"{queue_position + 1}/{total_queue}", True),
+                ("👥 In queue", str(total_queue), True),
             ],
         )
         await interaction.response.send_message(embed=embed, view=context.view)
@@ -1385,6 +1459,7 @@ class ComfyUIBot(commands.Bot):
         context.workflow_name = workflow_name
         context.prompt = prompt
         context.settings = settings
+        context.processing = True
         if context.seed is None and seed is not None:
             context.seed = seed
         if resolution:
@@ -1488,10 +1563,10 @@ class ComfyUIBot(commands.Bot):
         async def on_cancel(interaction: discord.Interaction) -> None:
             await self._handle_cancel_request(context, interaction)
 
-        async def on_copy(interaction: discord.Interaction) -> None:
-            await self._handle_copy_request(context, interaction)
+        async def on_reuse(interaction: discord.Interaction) -> None:
+            await self._handle_reuse_request(context, interaction)
 
-        return GenerationView(context.user.id, on_cancel, on_copy)
+        return GenerationView(context.user.id, on_cancel, on_reuse)
 
     def _determine_status_style(self, status: str, has_image: bool) -> tuple[int, str]:
         if has_image or status.startswith("✅") or status.startswith("🖼"):
@@ -1615,26 +1690,43 @@ class ComfyUIBot(commands.Bot):
         self._finalize_generation_context(context, success=False)
         await interaction.followup.send("Generation cancelled.", ephemeral=True)
 
-    async def _handle_copy_request(self, context: GenerationContext, interaction: discord.Interaction) -> None:
-        """Send the prompt and settings back to any user for easy copying."""
+    async def _handle_reuse_request(self, context: GenerationContext, interaction: discord.Interaction) -> None:
+        """Trigger a new generation using the user's last request parameters."""
 
-        if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
+        if interaction.user.id != int(context.user_id):
+            await interaction.response.send_message(
+                "Only the original requester can reuse this prompt.",
+                ephemeral=True,
+            )
+            return
 
-        prompt_text = context.prompt or "—"
-        settings_text = context.settings or "—"
-        parts = [
-            f"**Prompt:**\n```{prompt_text}```",
-            f"**Settings:**\n```{settings_text}```",
-        ]
-        if context.model_preset_name:
-            parts.append(f"**Model preset:** {context.model_preset_name}")
-        if context.lora_preset_name:
-            parts.append(f"**LoRA preset:** {context.lora_preset_name}")
-        if context.seed is not None:
-            parts.append(f"**Seed:** {context.seed}")
+        last_request = self._last_requests.get(context.user_id)
+        if not last_request:
+            await interaction.response.send_message(
+                "No previous request found to reuse. Run a generation first.",
+                ephemeral=True,
+            )
+            return
 
-        await interaction.followup.send("\n".join(parts), ephemeral=True)
+        if last_request.get("requires_image"):
+            await interaction.response.send_message(
+                "The last request used an image. Please run the command again with a new image to reuse it.",
+                ephemeral=True,
+            )
+            return
+
+        await self.handle_generation(
+            interaction,
+            last_request.get("workflow_type", "txt2img"),
+            last_request.get("prompt") or "",
+            last_request.get("workflow"),
+            last_request.get("settings"),
+            last_request.get("resolution"),
+            last_request.get("prompt_preset"),
+            last_request.get("model_preset"),
+            last_request.get("lora_preset"),
+            last_request.get("seed"),
+        )
 
     async def _handle_cancelled_generation(self, context: GenerationContext, *, reason: str = "Generation cancelled by user.") -> None:
         if context.cancelled_notified:
