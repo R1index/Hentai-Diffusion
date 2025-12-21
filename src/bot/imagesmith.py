@@ -364,7 +364,7 @@ class ComfyUIBot(commands.Bot):
                 continue
 
             position = idx + 1 + offset
-            status = f"⏳ Waiting in queue • position {position}/{total_display}"
+            status = "⏳ Waiting in queue"
             extra_fields: List[ui_embeds.EmbedField] = [
                 ("📬 Queue position", f"{position}/{total_display}", True),
                 ("👥 In queue", str(total), True),
@@ -1403,11 +1403,7 @@ class ComfyUIBot(commands.Bot):
 
         queue_position = self.generation_queue.get_queue_position()
         total_queue = self.generation_queue.size() + 1
-        status = (
-            f"⏳ Waiting in queue • position {queue_position + 1}"
-            if queue_position > 0
-            else "🚀 Preparing your generation…"
-        )
+        status = "⏳ Waiting in queue" if queue_position > 0 else "🚀 Preparing your generation…"
 
         context.view = self._create_generation_view(context)
         embed = self._build_generation_embed(
