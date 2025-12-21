@@ -33,7 +33,6 @@ from ..ui import embeds as ui_embeds
 from ..ui.views import GenerationView
 
 
-@dataclass
 @dataclass(frozen=True)
 class RoleTier:
     """Represents an access tier driven by Discord roles."""
