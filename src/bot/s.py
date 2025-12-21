@@ -34,19 +34,6 @@ from ..ui.views import GenerationView
 
 
 @dataclass
-@dataclass(frozen=True)
-class RoleTier:
-    """Represents an access tier driven by Discord roles."""
-
-    level: int
-    name: str
-    role_id: Optional[int]
-    daily_limit: Optional[int]
-    queue_priority: int
-    max_parallel_generations: int
-
-
-@dataclass
 class GenerationContext:
     """State for a single in-flight generation."""
 
@@ -55,23 +42,15 @@ class GenerationContext:
     workflow_type: str
     is_donor: bool
     prompt: Optional[str] = None
-    prompt_preset_name: Optional[str] = None
-    prompt_preset_tags: Optional[str] = None
-    model_preset_name: Optional[str] = None
-    lora_preset_name: Optional[str] = None
     settings: Optional[str] = None
     resolution: Optional[str] = None
-    seed: Optional[int] = None
     started_at: float = field(default_factory=time.time)
     workflow_name: Optional[str] = None
     message: Optional[discord.Message] = None
     prompt_id: Optional[str] = None
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
     view: Optional[GenerationView] = None
-    tier: RoleTier = field(default_factory=lambda: RoleTier(0, "Public", None, 25, 0, 1))
-    daily_limit: Optional[int] = None
     counted_usage: bool = False
-    slot_counted: bool = False
     completed: bool = False
     cancelled_notified: bool = False
     finalized: bool = False
@@ -80,6 +59,7 @@ class GenerationContext:
 
 class ComfyUIBot(commands.Bot):
     GENERATION_COUNTS_FILE = "generation_counts.yml"
+    DAILY_GENERATION_LIMIT = 50
     QUEUE_STUCK_THRESHOLD = 1800  # 30 minutes
     STATS_RETENTION_DAYS = 90
 
@@ -106,9 +86,7 @@ class ComfyUIBot(commands.Bot):
         self.plugins: List[Plugin] = []
 
         # Generation tracking
-        self.active_generations: Dict[str, List[GenerationContext]] = defaultdict(list)
-        self.synced_active_slots: Dict[str, int] = defaultdict(int)
-        self._sync_channel_cache: Optional[discord.abc.Messageable] = None
+        self.active_generations: Dict[str, GenerationContext] = {}
 
         # Spoiler handling
         self._spoiler_tags: Set[str] = set()
@@ -127,56 +105,6 @@ class ComfyUIBot(commands.Bot):
         self.access_guild_id: Optional[str] = None
         self.supporter_role_name: str = "Supporter"
         self.supporter_role_id: Optional[str] = None
-        self.role_tiers: List[RoleTier] = [
-            RoleTier(
-                level=4,
-                name="Level 4",
-                role_id=1451769149045997588,
-                daily_limit=None,
-                queue_priority=40,
-                max_parallel_generations=30,
-            ),
-            RoleTier(
-                level=3,
-                name="Level 3",
-                role_id=1451768900453925030,
-                daily_limit=None,
-                queue_priority=30,
-                max_parallel_generations=3,
-            ),
-            RoleTier(
-                level=2,
-                name="Level 2",
-                role_id=1361296590777745560,
-                daily_limit=None,
-                queue_priority=0,
-                max_parallel_generations=1,
-            ),
-            RoleTier(
-                level=1,
-                name="Level 1",
-                role_id=1450781064418299914,
-                daily_limit=100,
-                queue_priority=0,
-                max_parallel_generations=1,
-            ),
-            RoleTier(
-                level=0,
-                name="Public",
-                role_id=None,
-                daily_limit=25,
-                queue_priority=0,
-                max_parallel_generations=1,
-            ),
-        ]
-        self.donor_tier = RoleTier(
-            level=2,
-            name="Donor",
-            role_id=None,
-            daily_limit=None,
-            queue_priority=0,
-            max_parallel_generations=1,
-        )
         self.user_generation_counts: Dict[str, int] = defaultdict(int)
         self.user_generation_stats: Dict[str, Dict[str, Any]] = {}
         self.last_reset_time: float = time.time()
@@ -258,11 +186,20 @@ class ComfyUIBot(commands.Bot):
             self._set_spoiler_tags(config_data.get("spoilers", {}).get("tags", []))
 
             logger.info(
-                "Security configuration loaded • blocked=%d donors=%d access_guild=%s",
+                "Security configuration loaded • blocked=%d donors=%d",
                 len(self.blocked_users),
                 len(self.donor_users),
-                self.access_guild_id or "disabled",
             )
+
+            if self.access_guild_id:
+                role_descriptor = self.supporter_role_id or self.supporter_role_name
+                logger.info(
+                    "Supporter role checks enabled • guild=%s role=%s",
+                    self.access_guild_id,
+                    role_descriptor,
+                )
+            else:
+                logger.warning("Supporter role checks disabled: access_guild_id is not configured")
 
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("Failed to load security configuration: %s", exc)
@@ -334,13 +271,6 @@ class ComfyUIBot(commands.Bot):
             or str(user)
         )
         return f"{base_name} ({getattr(user, 'id', '?')})"
-
-    def _get_active_contexts(self, user_id: str) -> List[GenerationContext]:
-        contexts = self.active_generations.get(user_id, [])
-        return [ctx for ctx in contexts if not ctx.finalized]
-
-    def _get_remote_active_slots(self, user_id: str) -> int:
-        return max(0, int(self.synced_active_slots.get(user_id, 0)))
 
     async def _ensure_manage_guild(self, interaction: discord.Interaction) -> bool:
         perms = getattr(interaction.user, "guild_permissions", None)
@@ -507,76 +437,6 @@ class ComfyUIBot(commands.Bot):
         minutes = int((remaining % 3600) // 60)
         return f"{hours}h {minutes}m"
 
-    def _get_public_tier(self) -> RoleTier:
-        for tier in self.role_tiers:
-            if tier.level == 0:
-                return tier
-        return RoleTier(0, "Public", None, 25, 0, 1)
-
-    async def _get_access_guild(self) -> Optional[discord.Guild]:
-        if not self.access_guild_id:
-            logger.debug("access-guild: skip (id empty)")
-            return None
-
-        try:
-            gid = int(self.access_guild_id)
-        except Exception:
-            logger.warning("access-guild: invalid id=%r", self.access_guild_id)
-            return None
-
-        guild = self.get_guild(gid)
-        if guild:
-            return guild
-
-        try:
-            guild = await self.fetch_guild(gid)
-            logger.debug("access-guild: fetched guild %s", gid)
-            return guild
-        except Exception as exc:
-            logger.warning("access-guild: fetch_guild(%s) failed: %s", gid, exc)
-            return None
-
-    async def _get_access_member(self, interaction: discord.Interaction) -> Optional[discord.Member]:
-        try:
-            guild = await self._get_access_guild()
-            if not guild:
-                return None
-
-            if interaction.guild and interaction.guild.id == guild.id:
-                target_guild = interaction.guild
-                logger.debug("access-member: using interaction guild %s", guild.id)
-            else:
-                target_guild = guild
-
-            member = target_guild.get_member(interaction.user.id)
-            if member:
-                return member
-
-            try:
-                member = await target_guild.fetch_member(interaction.user.id)
-                logger.debug("access-member: fetched member %s on guild %s", interaction.user.id, target_guild.id)
-                return member
-            except Exception as exc:
-                logger.info("access-member: user %s not in guild %s (%s)", interaction.user.id, target_guild.id, exc)
-                return None
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.error("access-member: failed %s", exc)
-            return None
-
-    async def _determine_user_tier(self, interaction: discord.Interaction) -> RoleTier:
-        highest = self._get_public_tier()
-        member = await self._get_access_member(interaction)
-        role_ids: Set[int] = {r.id for r in getattr(member, "roles", [])} if member else set()
-
-        for tier in self.role_tiers:
-            if tier.role_id and tier.role_id in role_ids and tier.level > highest.level:
-                highest = tier
-
-        if str(interaction.user.id) in self.donor_users and highest.level < self.donor_tier.level:
-            highest = self.donor_tier
-
-        return highest
-
     # ------------------------------------------------------------------
     # Background monitoring
     # ------------------------------------------------------------------
@@ -587,8 +447,7 @@ class ComfyUIBot(commands.Bot):
         current_time = time.time()
         stuck_contexts = [
             context
-            for contexts in list(self.active_generations.values())
-            for context in contexts
+            for context in list(self.active_generations.values())
             if current_time - context.started_at > self.QUEUE_STUCK_THRESHOLD
         ]
 
@@ -679,7 +538,6 @@ class ComfyUIBot(commands.Bot):
             payload = data["payload"]
             event_id = payload["event_id"]
             src_bot = int(payload["source_bot_id"])
-            kind = payload.get("kind", "limit")
 
             self._sync_prune_seen()
             if event_id in self._sync_seen:
@@ -690,50 +548,13 @@ class ComfyUIBot(commands.Bot):
                 return
 
             user_id = str(int(payload["user_id"]))
-            tier_info = payload.get("tier", {})
-            tier_name = tier_info.get("name", "unknown")
-            queue_priority = tier_info.get("queue_priority", 0)
-            max_parallel = tier_info.get("max_parallel", 1)
-
-            if kind == "active_delta":
-                delta = int(payload.get("delta", 0))
-                current = self._get_remote_active_slots(user_id)
-                updated = max(0, current + delta)
-                if updated:
-                    self.synced_active_slots[user_id] = updated
-                else:
-                    self.synced_active_slots.pop(user_id, None)
-
-                logger.info(
-                    "SYNC active slots update from bot %s → user %s tier=%s delta=%s total_remote=%s (max_parallel=%s)",
-                    src_bot,
-                    user_id,
-                    tier_name,
-                    delta,
-                    updated,
-                    max_parallel,
-                )
-                return
-
             used = int(payload["generations_used"])
+            limit = int(payload["limit"])
             reset_at = float(payload["reset_at"])
-            limit_raw = tier_info.get("limit", payload.get("limit"))
-            limit = None if limit_raw in (None, -1) else int(limit_raw)
             incoming_last_reset = reset_at - 86400.0
 
             if getattr(self, "last_reset_time", 0) > incoming_last_reset + 2:
                 logger.debug("SYNC skipped — local reset is newer")
-                return
-
-            if limit is None:
-                logger.debug(
-                    "SYNC ignored for unlimited tier • bot=%s user=%s tier=%s priority=%s max_parallel=%s",
-                    src_bot,
-                    user_id,
-                    tier_name,
-                    queue_priority,
-                    max_parallel,
-                )
                 return
 
             self.user_generation_counts[user_id] = used
@@ -741,14 +562,11 @@ class ComfyUIBot(commands.Bot):
             self._save_generation_counts()
 
             logger.info(
-                "SYNC applied from bot %s → user %s tier=%s: %s/%s (priority=%s max_parallel=%s)",
+                "SYNC applied from bot %s → user %s: %s/%s",
                 src_bot,
                 user_id,
-                tier_name,
                 used,
                 limit,
-                queue_priority,
-                max_parallel,
             )
 
         except Exception as exc:  # pragma: no cover - defensive
@@ -854,33 +672,7 @@ class ComfyUIBot(commands.Bot):
             if expiry <= now:
                 self._sync_seen.pop(key, None)
 
-    async def _get_sync_channel(self) -> Optional[discord.abc.Messageable]:
-        if self._sync_channel_cache:
-            return self._sync_channel_cache
-
-        channel = self.get_channel(self.SYNC_CHANNEL_ID)
-        if not channel:
-            try:
-                channel = await self.fetch_channel(self.SYNC_CHANNEL_ID)
-            except Exception:
-                channel = None
-
-        if channel:
-            self._sync_channel_cache = channel
-
-        return channel
-
-    async def _publish_limit_update(
-        self,
-        *,
-        user_id: int,
-        used: int,
-        limit: Optional[int],
-        reset_at: float,
-        tier_name: str,
-        queue_priority: int,
-        max_parallel: int,
-        ) -> None:
+    async def _publish_limit_update(self, user_id: int, used: int, limit: int, reset_at: float) -> None:
         try:
             channel = self.get_channel(self.SYNC_CHANNEL_ID)
             if not channel:
@@ -893,20 +685,13 @@ class ComfyUIBot(commands.Bot):
 
             event_id = str(uuid.uuid4())
             payload = {
-                "kind": "limit",
                 "event_id": event_id,
                 "ts": int(self._sync_now()),
                 "source_bot_id": self.user.id if self.user else 0,
                 "user_id": int(user_id),
                 "generations_used": int(used),
-                "limit": None if limit is None else int(limit),
+                "limit": int(limit),
                 "reset_at": float(reset_at),
-                "tier": {
-                    "name": tier_name,
-                    "limit": None if limit is None else int(limit),
-                    "queue_priority": int(queue_priority),
-                    "max_parallel": int(max_parallel),
-                },
             }
             wrapper = {"payload": payload, "sig": self._sync_sign(payload)}
             await channel.send(self.SYNC_PREFIX + self._sync_canon(wrapper))
@@ -914,42 +699,6 @@ class ComfyUIBot(commands.Bot):
             self._sync_prune_seen()
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("publish_limit_update failed: %s", exc, exc_info=True)
-
-    async def _publish_active_delta(
-        self,
-        *,
-        user_id: int,
-        delta: int,
-        tier_name: str,
-        queue_priority: int,
-        max_parallel: int,
-    ) -> None:
-        try:
-            channel = await self._get_sync_channel()
-            if not channel or not self.SYNC_CHANNEL_ID:
-                return
-
-            event_id = str(uuid.uuid4())
-            payload = {
-                "kind": "active_delta",
-                "event_id": event_id,
-                "ts": int(self._sync_now()),
-                "source_bot_id": self.user.id if self.user else 0,
-                "user_id": int(user_id),
-                "delta": int(delta),
-                "tier": {
-                    "name": tier_name,
-                    "limit": None,
-                    "queue_priority": int(queue_priority),
-                    "max_parallel": int(max_parallel),
-                },
-            }
-            wrapper = {"payload": payload, "sig": self._sync_sign(payload)}
-            await channel.send(self.SYNC_PREFIX + self._sync_canon(wrapper))
-            self._sync_seen[event_id] = self._sync_now() + self._sync_seen_ttl
-            self._sync_prune_seen()
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.error("publish_active_delta failed: %s", exc, exc_info=True)
 
     # ------------------------------------------------------------------
     # Commands
@@ -960,17 +709,12 @@ class ComfyUIBot(commands.Bot):
             user_id = str(interaction.user.id)
             self._reset_counts_if_needed()
 
-            tier = await self._determine_user_tier(interaction)
-            is_donor = tier.daily_limit is None
+            is_donor = user_id in self.donor_users or await self._has_unlimited_access(interaction)
             count = self.user_generation_counts.get(user_id, 0)
-            queue_info = f"Queue slots: **{tier.max_parallel_generations}** at once."
-            priority_hint = "Priority over lower tiers." if tier.queue_priority >= 30 else "Standard queue priority."
 
             if is_donor:
                 description = (
-                    f"🌟 **{tier.name}**: unlimited access!\n"
-                    f"{queue_info}\n"
-                    f"{priority_hint}\n"
+                    "🌟 **Donor status**: unlimited access!\n"
                     "Thank you for supporting the project."
                 )
                 embed = ui_embeds.build_notice_embed(
@@ -981,13 +725,11 @@ class ComfyUIBot(commands.Bot):
             else:
                 usage = ui_embeds.format_usage_bar(
                     count,
-                    tier.daily_limit or 0,
+                    self.DAILY_GENERATION_LIMIT,
                     reset_hint=f"resets in {self._format_time_remaining()}",
                 )
                 description = (
-                    f"🔒 You are using the {tier.name} tier.\n"
-                    f"{queue_info}\n"
-                    f"{priority_hint}\n"
+                    "🔒 You are using the public tier.\n"
                     "Support us to unlock unlimited generations!"
                 )
                 embed = ui_embeds.build_notice_embed(
@@ -1124,18 +866,10 @@ class ComfyUIBot(commands.Bot):
         workflow: Optional[str] = None,
         settings: Optional[str] = None,
         resolution: Optional[str] = None,
-        prompt_preset: Optional[str] = None,
-        model_preset: Optional[str] = None,
-        lora_preset: Optional[str] = None,
-        seed: Optional[int] = None,
         input_image: Optional[discord.Attachment] = None,
-        **_: Any,
     ) -> None:
         user_id = str(interaction.user.id)
         self._reset_counts_if_needed()
-
-        user_global_name = getattr(interaction.user, "global_name", None)
-        logger.info("gen[%s] global_name=%s", user_id, user_global_name or "—")
 
         if user_id in self.blocked_users:
             await self._send_blocked_message(interaction)
@@ -1145,15 +879,8 @@ class ComfyUIBot(commands.Bot):
             await self._send_access_guild_required_message(interaction)
             return
 
-        tier = await self._determine_user_tier(interaction)
-        active_contexts = self._get_active_contexts(user_id)
-        global_active = len(active_contexts) + self._get_remote_active_slots(user_id)
-        if global_active >= tier.max_parallel_generations:
-            await self._send_active_generation_message(
-                interaction,
-                max_allowed=tier.max_parallel_generations,
-                active_count=global_active,
-            )
+        if user_id in self.active_generations and not self.active_generations[user_id].finalized:
+            await self._send_active_generation_message(interaction)
             return
 
         logger.info(
@@ -1165,52 +892,26 @@ class ComfyUIBot(commands.Bot):
             resolution or "default",
         )
 
-        is_supporter = tier.daily_limit is None
+        is_supporter = await self._has_unlimited_access(interaction)
         is_donor = is_supporter or user_id in self.donor_users
-
-        final_prompt, preset_name, preset_tags = self.workflow_manager.apply_prompt_preset(prompt_preset, prompt)
-        model_name, model_preset_name = self.workflow_manager.apply_model_preset(model_preset)
-        lora_name, lora_preset_name = self.workflow_manager.apply_lora_preset(lora_preset)
-
-        config_params = []
-        if model_name:
-            config_params.append(f"model={model_name}")
-        if seed is not None:
-            config_params.append(f"seed={seed}")
-        if lora_name:
-            config_params.append(f"lora={lora_name}")
-
-        settings_with_presets = settings
-        if config_params:
-            # Объединяем все параметры в один вызов config()
-            config_string = f"config({', '.join(config_params)})"
-            settings_with_presets = f"{settings};{config_string}" if settings else config_string
 
         context = GenerationContext(
             user_id=user_id,
             user=interaction.user,
             workflow_type=workflow_type,
             is_donor=is_donor,
-            tier=tier,
-            daily_limit=tier.daily_limit,
-            prompt=final_prompt,
-            prompt_preset_name=preset_name,
-            prompt_preset_tags=preset_tags,
-            model_preset_name=model_preset_name,
-            lora_preset_name=lora_preset_name,
-            settings=settings_with_presets,
+            prompt=prompt,
+            settings=settings,
             resolution=resolution,
-            seed=seed,
         )
 
-        context.force_spoiler = self._prompt_contains_spoiler_tag(final_prompt)
+        context.force_spoiler = self._prompt_contains_spoiler_tag(prompt)
 
         try:
-            if tier.daily_limit is not None:
+            if not is_donor:
                 current_usage = self.user_generation_counts[user_id]
-                limit = tier.daily_limit
-                if current_usage >= limit:
-                    await self._send_limit_reached_message(interaction, limit, tier.name)
+                if current_usage >= self.DAILY_GENERATION_LIMIT:
+                    await self._send_limit_reached_message(interaction)
                     return
 
                 self.user_generation_counts[user_id] = current_usage + 1
@@ -1222,36 +923,20 @@ class ComfyUIBot(commands.Bot):
                         self._publish_limit_update(
                             user_id=int(user_id),
                             used=int(self.user_generation_counts[user_id]),
-                            limit=limit,
+                            limit=self.DAILY_GENERATION_LIMIT,
                             reset_at=float(self.last_reset_time + 86400.0),
-                            tier_name=tier.name,
-                            queue_priority=tier.queue_priority,
-                            max_parallel=tier.max_parallel_generations,
                         )
                     )
                 except Exception as exc:  # pragma: no cover - defensive
                     logger.debug("SYNC publish skipped: %s", exc)
 
-            self.active_generations[user_id].append(context)
-            context.slot_counted = True
-            try:
-                asyncio.create_task(
-                self._publish_active_delta(
-                    user_id=int(user_id),
-                    delta=1,
-                        tier_name=tier.name,
-                        queue_priority=tier.queue_priority,
-                        max_parallel=tier.max_parallel_generations,
-                    )
-                )
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.debug("SYNC active publish skipped: %s", exc)
+            self.active_generations[user_id] = context
             await self._process_generation(
                 interaction,
                 workflow_type,
-                final_prompt,
+                prompt,
                 workflow,
-                settings_with_presets,
+                settings,
                 resolution,
                 input_image,
                 context,
@@ -1367,8 +1052,6 @@ class ComfyUIBot(commands.Bot):
             settings,
             context.resolution,
             image_data,
-            context.seed,
-            priority=context.tier.queue_priority,
         )
     async def _run_generation_pipeline(
         self,
@@ -1379,14 +1062,11 @@ class ComfyUIBot(commands.Bot):
         settings: Optional[str],
         resolution: Optional[str],
         image_data: Optional[bytes],
-        seed: Optional[int],
     ) -> None:
         start_ts = time.time()
         context.workflow_name = workflow_name
         context.prompt = prompt
         context.settings = settings
-        if context.seed is None and seed is not None:
-            context.seed = seed
         if resolution:
             context.resolution = resolution
 
@@ -1401,7 +1081,6 @@ class ComfyUIBot(commands.Bot):
                 settings,
                 context.resolution,
                 image_data,
-                seed=context.seed,
             )
 
             if context.cancel_event.is_set():
@@ -1488,10 +1167,7 @@ class ComfyUIBot(commands.Bot):
         async def on_cancel(interaction: discord.Interaction) -> None:
             await self._handle_cancel_request(context, interaction)
 
-        async def on_copy(interaction: discord.Interaction) -> None:
-            await self._handle_copy_request(context, interaction)
-
-        return GenerationView(context.user.id, on_cancel, on_copy)
+        return GenerationView(context.user.id, on_cancel)
 
     def _determine_status_style(self, status: str, has_image: bool) -> tuple[int, str]:
         if has_image or status.startswith("✅") or status.startswith("🖼"):
@@ -1552,16 +1228,8 @@ class ComfyUIBot(commands.Bot):
         fields: List[ui_embeds.EmbedField] = [("🎯 Mode", context.workflow_type.upper(), True)]
         if extra_fields:
             fields.extend(extra_fields)
-        if context.prompt_preset_name:
-            fields.append(("🏷️ Preset", context.prompt_preset_name, True))
-        if context.model_preset_name:
-            fields.append(("🧠 Model", context.model_preset_name, True))
-        if context.lora_preset_name:
-            fields.append(("🧩 LoRA", context.lora_preset_name, True))
         if context.resolution:
             fields.append(("🖼️ Resolution", context.resolution, True))
-        if context.seed is not None:
-            fields.append(("🌱 Seed", str(context.seed), True))
         fields.append(("🕒 Started", f"<t:{int(context.started_at)}:R>", True))
 
         return ui_embeds.build_generation_embed(
@@ -1581,11 +1249,9 @@ class ComfyUIBot(commands.Bot):
             return "💎 Unlimited access"
 
         used = self.user_generation_counts.get(context.user_id, 0)
-        if context.daily_limit is None:
-            return None
         return ui_embeds.format_usage_bar(
             used,
-            context.daily_limit,
+            self.DAILY_GENERATION_LIMIT,
             reset_hint=f"resets in {self._format_time_remaining()}",
         )
 
@@ -1615,27 +1281,6 @@ class ComfyUIBot(commands.Bot):
         self._finalize_generation_context(context, success=False)
         await interaction.followup.send("Generation cancelled.", ephemeral=True)
 
-    async def _handle_copy_request(self, context: GenerationContext, interaction: discord.Interaction) -> None:
-        """Send the prompt and settings back to any user for easy copying."""
-
-        if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
-
-        prompt_text = context.prompt or "—"
-        settings_text = context.settings or "—"
-        parts = [
-            f"**Prompt:**\n```{prompt_text}```",
-            f"**Settings:**\n```{settings_text}```",
-        ]
-        if context.model_preset_name:
-            parts.append(f"**Model preset:** {context.model_preset_name}")
-        if context.lora_preset_name:
-            parts.append(f"**LoRA preset:** {context.lora_preset_name}")
-        if context.seed is not None:
-            parts.append(f"**Seed:** {context.seed}")
-
-        await interaction.followup.send("\n".join(parts), ephemeral=True)
-
     async def _handle_cancelled_generation(self, context: GenerationContext, *, reason: str = "Generation cancelled by user.") -> None:
         if context.cancelled_notified:
             return
@@ -1656,16 +1301,7 @@ class ComfyUIBot(commands.Bot):
             return
 
         context.finalized = True
-        active = self.active_generations.get(context.user_id, [])
-        if active:
-            try:
-                active.remove(context)
-            except ValueError:
-                pass
-            if active:
-                self.active_generations[context.user_id] = active
-            else:
-                self.active_generations.pop(context.user_id, None)
+        self.active_generations.pop(context.user_id, None)
 
         if success:
             self._record_successful_generation(context.user_id)
@@ -1680,29 +1316,12 @@ class ComfyUIBot(commands.Bot):
                     self._publish_limit_update(
                         user_id=int(context.user_id),
                         used=new_value,
-                        limit=context.daily_limit or self._get_public_tier().daily_limit or 0,
+                        limit=self.DAILY_GENERATION_LIMIT,
                         reset_at=float(self.last_reset_time + 86400.0),
-                        tier_name=context.tier.name,
-                        queue_priority=context.tier.queue_priority,
-                        max_parallel=context.tier.max_parallel_generations,
                     )
                 )
             except Exception as exc:  # pragma: no cover - defensive
                 logger.debug("SYNC publish rollback skipped: %s", exc)
-
-        if context.slot_counted:
-            try:
-                asyncio.create_task(
-                    self._publish_active_delta(
-                        user_id=int(context.user_id),
-                        delta=-1,
-                        tier_name=context.tier.name,
-                        queue_priority=context.tier.queue_priority,
-                        max_parallel=context.tier.max_parallel_generations,
-                    )
-                )
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.debug("SYNC active rollback skipped: %s", exc)
 
     async def _send_blocked_message(self, interaction: discord.Interaction) -> None:
         embed = ui_embeds.build_notice_embed(
@@ -1712,32 +1331,23 @@ class ComfyUIBot(commands.Bot):
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    async def _send_active_generation_message(
-        self,
-        interaction: discord.Interaction,
-        *,
-        max_allowed: int,
-        active_count: int,
-    ) -> None:
+    async def _send_active_generation_message(self, interaction: discord.Interaction) -> None:
         embed = ui_embeds.build_notice_embed(
             title="⏳ Already processing",
-            description=(
-                "Please wait for your existing generations to finish before starting a new one.\n"
-                f"Slots in use across all bots: **{active_count}** / **{max_allowed}**"
-            ),
+            description="Please wait for your current generation to finish before starting a new one.",
             color=ui_embeds.WARNING_COLOR,
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    async def _send_limit_reached_message(self, interaction: discord.Interaction, limit: int, tier_name: str) -> None:
+    async def _send_limit_reached_message(self, interaction: discord.Interaction) -> None:
         usage = ui_embeds.format_usage_bar(
             self.user_generation_counts[str(interaction.user.id)],
-            limit,
+            self.DAILY_GENERATION_LIMIT,
             reset_hint=f"resets in {self._format_time_remaining()}",
         )
         embed = ui_embeds.build_limit_embed(
             description=(
-                f"You've reached the daily limit for the {tier_name} tier.\n"
+                "You've reached the daily limit for the public tier.\n"
                 "Support us to unlock unlimited generations!\n\n"
                 f"{usage}"
             )
@@ -1755,23 +1365,133 @@ class ComfyUIBot(commands.Bot):
     async def _is_member_of_access_guild(self, interaction: discord.Interaction) -> bool:
         try:
             if not self.access_guild_id:
-                logger.debug("access-guild: skip (id empty)")
+                logger.info("Access guild check skipped: access_guild_id is empty")
                 return True
 
-            member = await self._get_access_member(interaction)
-            return member is not None
+            try:
+                gid = int(self.access_guild_id)
+            except Exception:
+                logger.warning("Access guild check: invalid access_guild_id=%r", self.access_guild_id)
+                return False
+
+            if interaction.guild and interaction.guild.id == gid:
+                target_guild = interaction.guild
+                logger.debug("Access guild check: using interaction guild %s", gid)
+            else:
+                target_guild = self.get_guild(gid)
+                if target_guild is None:
+                    try:
+                        target_guild = await self.fetch_guild(gid)
+                        logger.debug("Access guild check: fetched guild %s", gid)
+                    except Exception as exc:
+                        logger.warning("Access guild check: fetch_guild(%s) failed: %s", gid, exc)
+                        return False
+
+            member = target_guild.get_member(interaction.user.id)
+            if member is not None:
+                return True
+
+            try:
+                await target_guild.fetch_member(interaction.user.id)
+                logger.debug(
+                    "Access guild check: fetched member %s on guild %s",
+                    interaction.user.id,
+                    gid,
+                )
+                return True
+            except Exception as exc:
+                logger.info(
+                    "Access guild check: user %s is not in guild %s: %s",
+                    interaction.user.id,
+                    gid,
+                    exc,
+                )
+                return False
         except Exception as exc:  # pragma: no cover - defensive
-            logger.error("access-guild: failed %s", exc)
+            logger.error("Access guild check failed: %s", exc)
             return False
 
     async def _send_access_guild_required_message(self, interaction: discord.Interaction) -> None:
         embed = ui_embeds.build_notice_embed(
             title="🚫 Access restricted",
-            description="Join the required server to start generations. https://discord.gg/XnxmanFBUp",
+            description="Join the required server to start generations.",
             color=ui_embeds.ERROR_COLOR,
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     async def _has_unlimited_access(self, interaction: discord.Interaction) -> bool:
-        tier = await self._determine_user_tier(interaction)
-        return tier.daily_limit is None
+        try:
+            if not self.access_guild_id:
+                logger.info("Supporter check: access_guild_id is empty")
+                return False
+
+            try:
+                gid = int(self.access_guild_id)
+            except Exception:
+                logger.warning("Supporter check: invalid access_guild_id=%r", self.access_guild_id)
+                return False
+
+            if interaction.guild and interaction.guild.id == gid:
+                target_guild = interaction.guild
+                logger.debug("Supporter check: using interaction guild %s", gid)
+            else:
+                target_guild = self.get_guild(gid)
+                if target_guild is None:
+                    try:
+                        target_guild = await self.fetch_guild(gid)
+                        logger.debug("Supporter check: fetched guild %s", gid)
+                    except Exception as exc:
+                        logger.warning("Supporter check: fetch_guild(%s) failed: %s", gid, exc)
+                        return False
+
+            member = target_guild.get_member(interaction.user.id)
+            if member is None:
+                try:
+                    member = await target_guild.fetch_member(interaction.user.id)
+                    logger.debug("Supporter check: fetched member %s on guild %s", interaction.user.id, gid)
+                except Exception as exc:
+                    logger.info("Supporter check: user %s is not in guild %s: %s", interaction.user.id, gid, exc)
+                    return False
+
+            role = None
+            if getattr(self, "supporter_role_id", None):
+                try:
+                    rid = int(self.supporter_role_id)
+                    role = target_guild.get_role(rid)
+                    if role:
+                        logger.debug("Supporter check: found role by ID %s: %s", rid, role.name)
+                except Exception:
+                    role = None
+
+            if role is None and getattr(self, "supporter_role_name", None):
+                lname = self.supporter_role_name.casefold()
+                for candidate in target_guild.roles:
+                    if candidate.name.casefold() == lname:
+                        role = candidate
+                        logger.debug("Supporter check: found role by name %s -> %s", self.supporter_role_name, candidate.id)
+                        break
+
+            if not role:
+                logger.warning(
+                    "Supporter check: role not found on guild (guild_id=%s, role_id=%s, role_name=%r)",
+                    gid,
+                    getattr(self, "supporter_role_id", None),
+                    getattr(self, "supporter_role_name", None),
+                )
+                return False
+
+            member_role_ids = {r.id for r in getattr(member, "roles", [])}
+            has_role = role.id in member_role_ids
+            logger.info(
+                "Supporter check: guild=%s member=%s role=%s/%s has=%s",
+                gid,
+                member.id,
+                role.id,
+                role.name,
+                has_role,
+            )
+            return has_role
+
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error("Supporter role check failed: %s", exc, exc_info=True)
+            return False

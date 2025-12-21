@@ -1,0 +1,22 @@
+[
+  {
+    "name": "Burnice",
+    "lora": "burnice.safetensors"
+  },
+  {
+    "name": "Pulchra",
+    "lora": "pulchra.safetensors"
+  },
+  {
+    "name": "Castorice",
+    "lora": "castorice3.safetensors"
+  },
+  {
+    "name": "Zani",
+    "lora": "zani.safetensors"
+  },
+  {
+    "name": "Phoebe",
+    "lora": "phoebe.safetensors"
+  }
+]

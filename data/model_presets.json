@@ -1,0 +1,10 @@
+[
+  {
+    "name": "Aozora XL Vpred",
+    "model": "aozoraXLVpred_v01AlphaVpred.safetensors"
+  },
+  {
+    "name": "obsessionIllustrious_vPredV20",
+    "model": "obsessionIllustrious_vPredV20.safetensors"
+  }
+]
