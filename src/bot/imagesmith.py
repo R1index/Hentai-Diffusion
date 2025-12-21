@@ -110,6 +110,7 @@ class ComfyUIBot(commands.Bot):
         # Generation tracking
         self.active_generations: Dict[str, List[GenerationContext]] = defaultdict(list)
         self.synced_active_slots: Dict[str, int] = defaultdict(int)
+        self._synced_active_expiry: Dict[str, float] = {}
         self._last_requests: Dict[str, Dict[str, Any]] = {}
         self._sync_channel_cache: Optional[discord.abc.Messageable] = None
 
@@ -343,7 +344,17 @@ class ComfyUIBot(commands.Bot):
         return [ctx for ctx in contexts if not ctx.finalized]
 
     def _get_remote_active_slots(self, user_id: str) -> int:
+        self._sync_prune_remote_slots()
         return max(0, int(self.synced_active_slots.get(user_id, 0)))
+
+    def _sync_prune_remote_slots(self) -> None:
+        """Drop stale remote slot info to avoid blocking users after desync."""
+
+        now = self._sync_now()
+        expired = [uid for uid, ttl in self._synced_active_expiry.items() if ttl <= now]
+        for uid in expired:
+            self.synced_active_slots.pop(uid, None)
+            self._synced_active_expiry.pop(uid, None)
 
     async def _on_queue_updated(self) -> None:
         await self._refresh_queue_views()
@@ -750,8 +761,10 @@ class ComfyUIBot(commands.Bot):
                 updated = max(0, current + delta)
                 if updated:
                     self.synced_active_slots[user_id] = updated
+                    self._synced_active_expiry[user_id] = self._sync_now() + self._sync_seen_ttl
                 else:
                     self.synced_active_slots.pop(user_id, None)
+                    self._synced_active_expiry.pop(user_id, None)
 
                 logger.info(
                     "SYNC active slots update from bot %s → user %s tier=%s delta=%s total_remote=%s (max_parallel=%s)",
