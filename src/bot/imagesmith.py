@@ -781,10 +781,21 @@ class ComfyUIBot(commands.Bot):
             limit_raw = tier_info.get("limit", payload.get("limit"))
             limit = None if limit_raw in (None, -1) else int(limit_raw)
             incoming_last_reset = reset_at - 86400.0
+            local_last_reset = getattr(self, "last_reset_time", 0)
 
-            if getattr(self, "last_reset_time", 0) > incoming_last_reset + 2:
+            if local_last_reset > incoming_last_reset + 2:
                 logger.debug("SYNC skipped — local reset is newer")
                 return
+
+            remote_reset_newer = incoming_last_reset > local_last_reset + 2
+            if remote_reset_newer:
+                logger.info(
+                    "SYNC detected newer reset from bot %s — clearing cached counts (local=%s remote=%s)",
+                    src_bot,
+                    local_last_reset,
+                    incoming_last_reset,
+                )
+                self.user_generation_counts.clear()
 
             if limit is None:
                 logger.debug(
