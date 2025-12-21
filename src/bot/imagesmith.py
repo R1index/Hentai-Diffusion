@@ -796,6 +796,7 @@ class ComfyUIBot(commands.Bot):
                     incoming_last_reset,
                 )
                 self.user_generation_counts.clear()
+                self.user_generation_stats.clear()
 
             if limit is None:
                 logger.debug(
