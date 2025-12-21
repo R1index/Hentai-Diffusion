@@ -108,6 +108,7 @@ class ComfyUIBot(commands.Bot):
         # Generation tracking
         self.active_generations: Dict[str, List[GenerationContext]] = defaultdict(list)
         self.synced_active_slots: Dict[str, int] = defaultdict(int)
+        self._last_requests: Dict[str, Dict[str, Any]] = {}
         self._sync_channel_cache: Optional[discord.abc.Messageable] = None
 
         # Spoiler handling
@@ -341,6 +342,19 @@ class ComfyUIBot(commands.Bot):
 
     def _get_remote_active_slots(self, user_id: str) -> int:
         return max(0, int(self.synced_active_slots.get(user_id, 0)))
+
+    def _store_last_request(
+        self,
+        user_id: str,
+        payload: Dict[str, Any],
+        *,
+        requires_image: bool = False,
+    ) -> None:
+        """Remember the user's latest request for quick reuse via UI."""
+
+        payload = dict(payload)
+        payload["requires_image"] = requires_image
+        self._last_requests[user_id] = payload
 
     async def _ensure_manage_guild(self, interaction: discord.Interaction) -> bool:
         perms = getattr(interaction.user, "guild_permissions", None)
@@ -1336,6 +1350,22 @@ class ComfyUIBot(commands.Bot):
                 return
             image_data = await input_image.read()
 
+        self._store_last_request(
+            user_id,
+            {
+                "workflow_type": workflow_type,
+                "prompt": prompt,
+                "workflow": workflow,
+                "settings": settings,
+                "resolution": resolution,
+                "prompt_preset": prompt_preset,
+                "model_preset": model_preset,
+                "lora_preset": lora_preset,
+                "seed": seed,
+            },
+            requires_image=input_image is not None,
+        )
+
         queue_position = self.generation_queue.get_queue_position()
         status = (
             f"⏳ Waiting in queue • position {queue_position + 1}"
@@ -1488,10 +1518,10 @@ class ComfyUIBot(commands.Bot):
         async def on_cancel(interaction: discord.Interaction) -> None:
             await self._handle_cancel_request(context, interaction)
 
-        async def on_copy(interaction: discord.Interaction) -> None:
-            await self._handle_copy_request(context, interaction)
+        async def on_reuse(interaction: discord.Interaction) -> None:
+            await self._handle_reuse_request(context, interaction)
 
-        return GenerationView(context.user.id, on_cancel, on_copy)
+        return GenerationView(context.user.id, on_cancel, on_reuse)
 
     def _determine_status_style(self, status: str, has_image: bool) -> tuple[int, str]:
         if has_image or status.startswith("✅") or status.startswith("🖼"):
@@ -1615,26 +1645,43 @@ class ComfyUIBot(commands.Bot):
         self._finalize_generation_context(context, success=False)
         await interaction.followup.send("Generation cancelled.", ephemeral=True)
 
-    async def _handle_copy_request(self, context: GenerationContext, interaction: discord.Interaction) -> None:
-        """Send the prompt and settings back to any user for easy copying."""
+    async def _handle_reuse_request(self, context: GenerationContext, interaction: discord.Interaction) -> None:
+        """Trigger a new generation using the user's last request parameters."""
 
-        if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
+        if interaction.user.id != int(context.user_id):
+            await interaction.response.send_message(
+                "Only the original requester can reuse this prompt.",
+                ephemeral=True,
+            )
+            return
 
-        prompt_text = context.prompt or "—"
-        settings_text = context.settings or "—"
-        parts = [
-            f"**Prompt:**\n```{prompt_text}```",
-            f"**Settings:**\n```{settings_text}```",
-        ]
-        if context.model_preset_name:
-            parts.append(f"**Model preset:** {context.model_preset_name}")
-        if context.lora_preset_name:
-            parts.append(f"**LoRA preset:** {context.lora_preset_name}")
-        if context.seed is not None:
-            parts.append(f"**Seed:** {context.seed}")
+        last_request = self._last_requests.get(context.user_id)
+        if not last_request:
+            await interaction.response.send_message(
+                "No previous request found to reuse. Run a generation first.",
+                ephemeral=True,
+            )
+            return
 
-        await interaction.followup.send("\n".join(parts), ephemeral=True)
+        if last_request.get("requires_image"):
+            await interaction.response.send_message(
+                "The last request used an image. Please run the command again with a new image to reuse it.",
+                ephemeral=True,
+            )
+            return
+
+        await self.handle_generation(
+            interaction,
+            last_request.get("workflow_type", "txt2img"),
+            last_request.get("prompt") or "",
+            last_request.get("workflow"),
+            last_request.get("settings"),
+            last_request.get("resolution"),
+            last_request.get("prompt_preset"),
+            last_request.get("model_preset"),
+            last_request.get("lora_preset"),
+            last_request.get("seed"),
+        )
 
     async def _handle_cancelled_generation(self, context: GenerationContext, *, reason: str = "Generation cancelled by user.") -> None:
         if context.cancelled_notified:
