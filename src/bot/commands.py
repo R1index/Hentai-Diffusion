@@ -63,12 +63,12 @@ def rgen_command(bot):
             settings: Optional[str] = None
     ):
         selected_resolution = resolution.value if resolution else None
-        await bot.handle_generation(
+        await bot.orchestrator.handle_generation(
             interaction,
             'txt2img',
             prompt,
-            workflow,
-            settings,
+            workflow=workflow,
+            settings=settings,
             resolution=selected_resolution,
             prompt_preset=prompt_preset,
             model_preset=model_preset,
@@ -113,12 +113,12 @@ def reforge_command(bot):
             workflow: Optional[str] = None,
         settings: Optional[str] = None
     ):
-        await bot.handle_generation(
+        await bot.orchestrator.handle_generation(
             interaction,
             'img2img',
             prompt,
-            workflow,
-            settings,
+            workflow=workflow,
+            settings=settings,
             prompt_preset=prompt_preset,
             model_preset=model_preset,
             lora_preset=lora_preset,
@@ -160,12 +160,12 @@ def upscale_command(bot):
             workflow: Optional[str] = None,
         settings: Optional[str] = None
     ):
-        await bot.handle_generation(
+        await bot.orchestrator.handle_generation(
             interaction,
             'upscale',
             prompt,
-            workflow,
-            settings,
+            workflow=workflow,
+            settings=settings,
             prompt_preset=prompt_preset,
             model_preset=model_preset,
             lora_preset=lora_preset,
