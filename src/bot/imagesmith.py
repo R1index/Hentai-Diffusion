@@ -797,6 +797,8 @@ class ComfyUIBot(commands.Bot):
                 )
                 self.user_generation_counts.clear()
                 self.user_generation_stats.clear()
+                self.synced_active_slots.pop(user_id, None)
+                self._synced_active_expiry.pop(user_id, None)
 
             if limit is None:
                 logger.debug(
