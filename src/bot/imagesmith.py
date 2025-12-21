@@ -180,6 +180,7 @@ class ComfyUIBot(commands.Bot):
         self.user_generation_counts: Dict[str, int] = defaultdict(int)
         self.user_generation_stats: Dict[str, Dict[str, Any]] = {}
         self.last_reset_time: float = time.time()
+        self._last_generation_inputs: Dict[str, Dict[str, Dict[str, Any]]] = defaultdict(dict)
 
         os.makedirs("data", exist_ok=True)
         self._load_security_lists()
@@ -1168,9 +1169,28 @@ class ComfyUIBot(commands.Bot):
         is_supporter = tier.daily_limit is None
         is_donor = is_supporter or user_id in self.donor_users
 
+        history = self._last_generation_inputs[user_id].get(workflow_type, {})
+        workflow = workflow or history.get("workflow")
+        settings = settings or history.get("settings")
+        resolution = resolution or history.get("resolution")
+        prompt_preset = prompt_preset or history.get("prompt_preset")
+        model_preset = model_preset or history.get("model_preset")
+        lora_preset = lora_preset or history.get("lora_preset")
+        seed = seed if seed is not None else history.get("seed")
+
         final_prompt, preset_name, preset_tags = self.workflow_manager.apply_prompt_preset(prompt_preset, prompt)
         model_name, model_preset_name = self.workflow_manager.apply_model_preset(model_preset)
         lora_name, lora_preset_name = self.workflow_manager.apply_lora_preset(lora_preset)
+
+        self._last_generation_inputs[user_id][workflow_type] = {
+            "workflow": workflow,
+            "settings": settings,
+            "resolution": resolution,
+            "prompt_preset": prompt_preset,
+            "model_preset": model_preset,
+            "lora_preset": lora_preset,
+            "seed": seed,
+        }
 
         config_params = []
         if model_name:
