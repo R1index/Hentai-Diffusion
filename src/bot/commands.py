@@ -1,7 +1,30 @@
-from typing import Optional
+from typing import Callable, Optional
 
 import discord
 from discord import app_commands
+
+
+def _make_preset_autocomplete(
+        search_func: Callable[[str, int], list]
+) -> Callable[[discord.Interaction, str], list[app_commands.Choice[str]]]:
+    async def _autocomplete(
+            interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        presets = search_func(current, limit=25)
+        return [
+            app_commands.Choice(name=preset.name, value=preset.value)
+            for preset in presets
+        ]
+
+    return _autocomplete
+
+
+def _preset_autocompletes(bot):
+    return (
+        _make_preset_autocomplete(bot.workflow_manager.search_prompt_presets),
+        _make_preset_autocomplete(bot.workflow_manager.search_model_presets),
+        _make_preset_autocomplete(bot.workflow_manager.search_lora_presets),
+    )
 
 
 def rgen_command(bot):
@@ -12,32 +35,7 @@ def rgen_command(bot):
         for label, value in bot.workflow_manager.get_resolution_presets()[:25]
     ]
 
-    async def _prompt_preset_autocomplete(
-            interaction: discord.Interaction, current: str
-    ) -> list[app_commands.Choice[str]]:
-        presets = bot.workflow_manager.search_prompt_presets(current, limit=25)
-        return [
-            app_commands.Choice(name=preset.name, value=preset.value)
-            for preset in presets
-        ]
-
-    async def _model_preset_autocomplete(
-            interaction: discord.Interaction, current: str
-    ) -> list[app_commands.Choice[str]]:
-        presets = bot.workflow_manager.search_model_presets(current, limit=25)
-        return [
-            app_commands.Choice(name=preset.name, value=preset.value)
-            for preset in presets
-        ]
-
-    async def _lora_preset_autocomplete(
-            interaction: discord.Interaction, current: str
-    ) -> list[app_commands.Choice[str]]:
-        presets = bot.workflow_manager.search_lora_presets(current, limit=25)
-        return [
-            app_commands.Choice(name=preset.name, value=preset.value)
-            for preset in presets
-        ]
+    prompt_autocomplete, model_autocomplete, lora_autocomplete = _preset_autocompletes(bot)
 
     @app_commands.command(
         name="rgen",
@@ -80,9 +78,9 @@ def rgen_command(bot):
 
     if resolution_choices:
         rgen = app_commands.choices(resolution=resolution_choices)(rgen)
-    rgen = app_commands.autocomplete(prompt_preset=_prompt_preset_autocomplete)(rgen)
-    rgen = app_commands.autocomplete(model_preset=_model_preset_autocomplete)(rgen)
-    rgen = app_commands.autocomplete(lora_preset=_lora_preset_autocomplete)(rgen)
+    rgen = app_commands.autocomplete(prompt_preset=prompt_autocomplete)(rgen)
+    rgen = app_commands.autocomplete(model_preset=model_autocomplete)(rgen)
+    rgen = app_commands.autocomplete(lora_preset=lora_autocomplete)(rgen)
 
     return rgen
 
@@ -113,7 +111,7 @@ def reforge_command(bot):
             lora_preset: Optional[str] = None,
             seed: Optional[int] = None,
             workflow: Optional[str] = None,
-            settings: Optional[str] = None
+        settings: Optional[str] = None
     ):
         await bot.handle_generation(
             interaction,
@@ -128,9 +126,10 @@ def reforge_command(bot):
             input_image=image,
         )
 
-    reforge = app_commands.autocomplete(prompt_preset=_prompt_preset_autocomplete)(reforge)
-    reforge = app_commands.autocomplete(model_preset=_model_preset_autocomplete)(reforge)
-    return app_commands.autocomplete(lora_preset=_lora_preset_autocomplete)(reforge)
+    prompt_autocomplete, model_autocomplete, lora_autocomplete = _preset_autocompletes(bot)
+    reforge = app_commands.autocomplete(prompt_preset=prompt_autocomplete)(reforge)
+    reforge = app_commands.autocomplete(model_preset=model_autocomplete)(reforge)
+    return app_commands.autocomplete(lora_preset=lora_autocomplete)(reforge)
 
 
 def upscale_command(bot):
@@ -159,7 +158,7 @@ def upscale_command(bot):
             lora_preset: Optional[str] = None,
             seed: Optional[int] = None,
             workflow: Optional[str] = None,
-            settings: Optional[str] = None
+        settings: Optional[str] = None
     ):
         await bot.handle_generation(
             interaction,
@@ -174,9 +173,10 @@ def upscale_command(bot):
             input_image=image,
         )
 
-    upscale = app_commands.autocomplete(prompt_preset=_prompt_preset_autocomplete)(upscale)
-    upscale = app_commands.autocomplete(model_preset=_model_preset_autocomplete)(upscale)
-    return app_commands.autocomplete(lora_preset=_lora_preset_autocomplete)(upscale)
+    prompt_autocomplete, model_autocomplete, lora_autocomplete = _preset_autocompletes(bot)
+    upscale = app_commands.autocomplete(prompt_preset=prompt_autocomplete)(upscale)
+    upscale = app_commands.autocomplete(model_preset=model_autocomplete)(upscale)
+    return app_commands.autocomplete(lora_preset=lora_autocomplete)(upscale)
 
 
 def workflows_command(bot):
