@@ -76,6 +76,7 @@ class GenerationContext:
     cancelled_notified: bool = False
     finalized: bool = False
     force_spoiler: bool = False
+    processing: bool = False
 
 
 class ComfyUIBot(commands.Bot):
@@ -101,6 +102,7 @@ class ComfyUIBot(commands.Bot):
         self.basic_security = BasicSecurity(self)
         self.comfy_client: Optional[ComfyUIClient] = None
         self.generation_queue = GenerationQueue()
+        self.generation_queue.set_update_callback(self._on_queue_updated)
 
         # Plugin system
         self.plugins: List[Plugin] = []
@@ -342,6 +344,39 @@ class ComfyUIBot(commands.Bot):
 
     def _get_remote_active_slots(self, user_id: str) -> int:
         return max(0, int(self.synced_active_slots.get(user_id, 0)))
+
+    async def _on_queue_updated(self) -> None:
+        await self._refresh_queue_views()
+
+    async def _refresh_queue_views(self) -> None:
+        """Dynamically update queue positions for pending generations."""
+
+        pending = self.generation_queue.get_pending_contexts()
+        current = self.generation_queue.current_context
+        total = len(pending) + (1 if current else 0)
+        offset = 1 if current else 0
+        total_display = max(total, 1)
+
+        for idx, ctx in enumerate(pending):
+            if ctx.finalized or ctx.cancel_event.is_set() or ctx.processing:
+                continue
+            if not ctx.message:
+                continue
+
+            position = idx + 1 + offset
+            status = f"⏳ Waiting in queue • position {position}/{total_display}"
+            extra_fields: List[ui_embeds.EmbedField] = [
+                ("📬 Queue position", f"{position}/{total_display}", True),
+                ("👥 In queue", str(total), True),
+            ]
+
+            await self._update_generation_message(
+                ctx,
+                status=status,
+                title="🎨 Generation queued",
+                color=ui_embeds.ACCENT_COLOR,
+                extra_fields=extra_fields,
+            )
 
     def _store_last_request(
         self,
@@ -1367,6 +1402,7 @@ class ComfyUIBot(commands.Bot):
             image_data = await input_image.read()
 
         queue_position = self.generation_queue.get_queue_position()
+        total_queue = self.generation_queue.size() + 1
         status = (
             f"⏳ Waiting in queue • position {queue_position + 1}"
             if queue_position > 0
@@ -1380,9 +1416,8 @@ class ComfyUIBot(commands.Bot):
             title="🎨 Generation queued",
             color=ui_embeds.ACCENT_COLOR,
             extra_fields=[
-                ("📬 Queue position", str(queue_position + 1), True)
-                if queue_position > 0
-                else ("📬 Queue position", "Active", True)
+                ("📬 Queue position", f"{queue_position + 1}/{total_queue}", True),
+                ("👥 In queue", str(total_queue), True),
             ],
         )
         await interaction.response.send_message(embed=embed, view=context.view)
@@ -1415,6 +1450,7 @@ class ComfyUIBot(commands.Bot):
         context.workflow_name = workflow_name
         context.prompt = prompt
         context.settings = settings
+        context.processing = True
         if context.seed is None and seed is not None:
             context.seed = seed
         if resolution:
