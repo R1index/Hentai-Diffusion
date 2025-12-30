@@ -711,6 +711,7 @@ class ComfyUIBot(commands.Bot):
             self.tree.add_command(workflows_command(self))
             self.tree.add_command(self._create_limits_command())
             self.tree.add_command(self._create_spoiler_command())
+            self.tree.add_command(self._create_cancel_command())
             self.tree.add_command(profile_command(self))
 
             synced_commands = await self.tree.sync()
@@ -1060,6 +1061,43 @@ class ComfyUIBot(commands.Bot):
             await interaction.response.send_message(embed=embed, ephemeral=True)
 
         return limits_command
+
+    def _create_cancel_command(self):
+        @app_commands.command(name="cancel", description="Cancel your active generation")
+        @app_commands.describe(cancel_all="Cancel all active generations instead of only the latest one")
+        async def cancel_command(interaction: discord.Interaction, cancel_all: bool = False) -> None:
+            user_id = str(interaction.user.id)
+            contexts = self._get_active_contexts(user_id)
+
+            if not contexts:
+                await interaction.response.send_message(
+                    "You have no active generations to cancel.",
+                    ephemeral=True,
+                )
+                return
+
+            targets = contexts if cancel_all else [contexts[-1]]
+
+            await interaction.response.defer(ephemeral=True)
+
+            cancelled = 0
+            for context in targets:
+                if await self._cancel_generation_context(context, source="command"):
+                    cancelled += 1
+
+            if cancelled:
+                plural = "generation" if cancelled == 1 else "generations"
+                await interaction.followup.send(
+                    f"Cancelled {cancelled} {plural}.",
+                    ephemeral=True,
+                )
+            else:
+                await interaction.followup.send(
+                    "No active generations could be cancelled.",
+                    ephemeral=True,
+                )
+
+        return cancel_command
 
     def _create_spoiler_command(self) -> app_commands.Group:
         spoiler_group = app_commands.Group(name="spoiler", description="Manage spoiler tags")
@@ -1663,19 +1701,17 @@ class ComfyUIBot(commands.Bot):
             reset_hint=f"resets in {self._format_time_remaining()}",
         )
 
-    async def _handle_cancel_request(self, context: GenerationContext, interaction: discord.Interaction) -> None:
-        if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
-
-        if context.cancel_event.is_set():
-            await interaction.followup.send("Generation already cancelled.", ephemeral=True)
-            return
+    async def _cancel_generation_context(self, context: GenerationContext, *, source: str) -> bool:
+        if context.cancel_event.is_set() or context.finalized:
+            return False
 
         logger.info(
-            "gen[%s|%s] cancellation requested",
+            "gen[%s|%s] cancellation requested (%s)",
             context.user_id,
             self._format_user_for_log(context.user),
+            source,
         )
+
         context.cancel_event.set()
         await self.generation_queue.cancel_pending(context)
 
@@ -1687,7 +1723,18 @@ class ComfyUIBot(commands.Bot):
 
         await self._handle_cancelled_generation(context)
         self._finalize_generation_context(context, success=False)
-        await interaction.followup.send("Generation cancelled.", ephemeral=True)
+        return True
+
+    async def _handle_cancel_request(self, context: GenerationContext, interaction: discord.Interaction) -> None:
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
+        cancelled = await self._cancel_generation_context(context, source="button")
+
+        if cancelled:
+            await interaction.followup.send("Generation cancelled.", ephemeral=True)
+        else:
+            await interaction.followup.send("Generation already cancelled.", ephemeral=True)
 
     async def _handle_reuse_request(self, context: GenerationContext, interaction: discord.Interaction) -> None:
         """Trigger a new generation using the user's last request parameters."""
