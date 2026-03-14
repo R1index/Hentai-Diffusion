@@ -670,20 +670,32 @@ class WorkflowManager:
 
         # Different workflow nodes expect different input names for resolution.
         # Examples:
-        # - Some custom nodes read plain "resolution"
-        # - `SDXL Empty Latent Image (rgthree)` reads "dimensions"
-        #   like: " 1216 x 832  (landscape)"
-        inputs['resolution'] = resolution
+        # - Some nodes read plain "resolution"
+        # - `SDXL Empty Latent Image (rgthree)` reads "dimensions" and validates
+        #   it strictly against a fixed list (including exact spacing).
+        if 'resolution' in inputs:
+            inputs['resolution'] = resolution
 
         normalized_resolution = str(resolution).strip().lower()
         resolution_match = re.search(r'(\d+)\s*x\s*(\d+)', normalized_resolution)
         if resolution_match:
             width = int(resolution_match.group(1))
             height = int(resolution_match.group(2))
-            orientation = "landscape" if width >= height else "portrait"
 
+            if width == height:
+                orientation = "square"
+            elif width > height:
+                orientation = "landscape"
+            else:
+                orientation = "portrait"
+
+            # Keep formatting compatible with rgthree enum values.
+            # Examples:
+            # - "1216 x 832   (landscape)"
+            # - " 832 x 1216  (portrait)"
+            # - "1024 x 1024  (square)"
             if 'dimensions' in inputs:
-                inputs['dimensions'] = f" {width} x {height}  ({orientation})"
+                inputs['dimensions'] = f"{width:>4} x {height:<4}  ({orientation})"
 
             if 'width' in inputs:
                 inputs['width'] = width
