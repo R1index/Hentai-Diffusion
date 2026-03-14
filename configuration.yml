@@ -41,10 +41,11 @@ workflows:
     type: txt2img
     description: Workflow type 1.
     workflow: ./workflows/ExpNEW.json
-    text_prompt_node_id: 45
+    text_prompt_node_id: 32
     default: true
     default_resolution: portrait - 832x1216 (2:3)
-    resolution_node_id: 9
+    resolution_node_id: 21
+    seed_node_id: 18
     settings:
       - name: __before
         description: Will change steps for this workflow to the number provided in parenthesis
@@ -76,8 +77,8 @@ workflows:
               safe_set(47, "index", int(0))
               safe_set(11, "lora_name", "None")
               safe_set(11, "vae_name", "Baked VAE")
-              safe_set(11, "ckpt_name", "aozoraXLVpred_v01AlphaVpred.safetensors")
-              safe_set(106, "seed", random.randint(0, 2**32 - 1))
+              safe_set(1, "ckpt_name", "aozoraXLVpred_v01AlphaVpred.safetensors")
+              safe_set(18, "seed", random.randint(0, 2**32 - 1))
 
               # LoRA Stacker / EasyLoraStack: выключаем по умолчанию
               ls_id = find_lora_stacker("111")
@@ -135,9 +136,9 @@ workflows:
 
               # seed
               if "seed" in params:
-                  safe_set(106, "seed", int(params["seed"]))
+                  safe_set(18, "seed", int(params["seed"]))
               else:
-                  safe_set(106, "seed", random.randint(0, 2**32 - 1))
+                  safe_set(18, "seed", random.randint(0, 2**32 - 1))
 
               # model
               if "model" in params:
@@ -145,14 +146,14 @@ workflows:
                   if not model_name.endswith(".safetensors"):
                       model_name += ".safetensors"
 
-                  safe_set(11, "ckpt_name", model_name)
+                  safe_set(1, "ckpt_name", model_name)
                   safe_set(11, "vae_name", "Baked VAE")
                   # здесь у тебя всегда None — оставим так, т.к. LoRA переключаем отдельно
                   safe_set(11, "lora_name", "None")
               else:
                   safe_set(11, "lora_name", "None")
                   safe_set(11, "vae_name", "Baked VAE")
-                  safe_set(11, "ckpt_name", "aozoraXLVpred_v01AlphaVpred.safetensors")
+                  safe_set(1, "ckpt_name", "aozoraXLVpred_v01AlphaVpred.safetensors")
 
               # lora → через LoRA Stacker (если есть)
               ls_id = find_lora_stacker("111")
@@ -227,11 +228,12 @@ workflows:
   ExpNEWlandscape:
     type: txt2img
     description: Workflow type 1.
-    workflow: ./workflows/ExpNEWlandscape.json
-    text_prompt_node_id: 45
+    workflow: ./workflows/ExpNEW.json
+    text_prompt_node_id: 32
     default: true
     default_resolution: landscape - 1216x832 (3:2)
-    resolution_node_id: 9
+    resolution_node_id: 21
+    seed_node_id: 18
     settings:
       - name: __before
         description: Will change steps for this workflow to the number provided in parenthesis
@@ -263,8 +265,8 @@ workflows:
               safe_set(47, "index", int(0))
               safe_set(11, "lora_name", "None")
               safe_set(11, "vae_name", "Baked VAE")
-              safe_set(11, "ckpt_name", "aozoraXLVpred_v01AlphaVpred.safetensors")
-              safe_set(106, "seed", random.randint(0, 2**32 - 1))
+              safe_set(1, "ckpt_name", "aozoraXLVpred_v01AlphaVpred.safetensors")
+              safe_set(18, "seed", random.randint(0, 2**32 - 1))
 
               # LoRA Stacker: выключаем по умолчанию и гасим обязательные поля
               ls_id = find_lora_stacker("49")
@@ -310,9 +312,9 @@ workflows:
 
               # seed
               if "seed" in params:
-                  safe_set(106, "seed", int(params["seed"]))
+                  safe_set(18, "seed", int(params["seed"]))
               else:
-                  safe_set(106, "seed", random.randint(0, 2**32 - 1))
+                  safe_set(18, "seed", random.randint(0, 2**32 - 1))
 
               # model
               if "model" in params:
@@ -320,14 +322,14 @@ workflows:
                   if not model_name.endswith(".safetensors"):
                       model_name += ".safetensors"
 
-                  safe_set(11, "ckpt_name", model_name)
+                  safe_set(1, "ckpt_name", model_name)
                   safe_set(11, "vae_name", "Baked VAE")
                   # здесь у тебя всегда None — оставим так, т.к. LoRA переключаем отдельно
                   safe_set(11, "lora_name", "None")
               else:
                   safe_set(11, "lora_name", "None")
                   safe_set(11, "vae_name", "Baked VAE")
-                  safe_set(11, "ckpt_name", "aozoraXLVpred_v01AlphaVpred.safetensors")
+                  safe_set(1, "ckpt_name", "aozoraXLVpred_v01AlphaVpred.safetensors")
 
               # lora → через LoRA Stacker (если есть)
               ls_id = find_lora_stacker("49")
