@@ -668,7 +668,28 @@ class WorkflowManager:
                 resolution,
             )
 
+        # Different workflow nodes expect different input names for resolution.
+        # Examples:
+        # - Some custom nodes read plain "resolution"
+        # - `SDXL Empty Latent Image (rgthree)` reads "dimensions"
+        #   like: " 1216 x 832  (landscape)"
         inputs['resolution'] = resolution
+
+        normalized_resolution = str(resolution).strip().lower()
+        resolution_match = re.search(r'(\d+)\s*x\s*(\d+)', normalized_resolution)
+        if resolution_match:
+            width = int(resolution_match.group(1))
+            height = int(resolution_match.group(2))
+            orientation = "landscape" if width >= height else "portrait"
+
+            if 'dimensions' in inputs:
+                inputs['dimensions'] = f" {width} x {height}  ({orientation})"
+
+            if 'width' in inputs:
+                inputs['width'] = width
+            if 'height' in inputs:
+                inputs['height'] = height
+
         logger.debug(
             "Applied resolution '%s' to node '%s' in workflow '%s'",
             resolution,
