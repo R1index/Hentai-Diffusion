@@ -63,7 +63,8 @@ workflows:
 
                   # поиск по class_type
                   for k, v in workflowjson.items():
-                      if isinstance(v, dict) and v.get("class_type", "").lower().find("lora stacker") != -1:
+                      class_type = v.get("class_type", "").lower() if isinstance(v, dict) else ""
+                      if "lora stacker" in class_type or "lora loader stack" in class_type:
                           return k
 
                   return None
@@ -94,6 +95,11 @@ workflows:
                       inp["lora_1_clip_strength"] = 0.0
                       for i in range(2, 11):
                           inp[f"lora_{i}_name"] = "None"
+                  # rgthree Lora Loader Stack
+                  elif "lora_01" in inp:
+                      for i in range(1, 5):
+                          inp[f"lora_{i:02d}"] = "None"
+                          inp[f"strength_{i:02d}"] = 0.0
                   else:
                       for i in (1, 2):
                           inp[f"lora_name_{i}"] = "None"
@@ -115,7 +121,8 @@ workflows:
                       return str(fallback_id)
 
                   for k, v in workflowjson.items():
-                      if isinstance(v, dict) and v.get("class_type", "").lower().find("lora stacker") != -1:
+                      class_type = v.get("class_type", "").lower() if isinstance(v, dict) else ""
+                      if "lora stacker" in class_type or "lora loader stack" in class_type:
                           return k
 
                   return None
@@ -187,6 +194,26 @@ workflows:
                           inp[f"lora_{idx}_clip_strength"] = strength
                       for idx in range(len(names) + 1, 11):
                           inp[f"lora_{idx}_name"] = "None"
+
+                      return
+
+                  # rgthree Lora Loader Stack
+                  if "lora_01" in inp:
+                      if not names:
+                          for i in range(1, 5):
+                              inp[f"lora_{i:02d}"] = "None"
+                              inp[f"strength_{i:02d}"] = 0.0
+                          return
+
+                      for idx, name in enumerate(names, start=1):
+                          if idx > 4:
+                              break
+                          inp[f"lora_{idx:02d}"] = name
+                          inp[f"strength_{idx:02d}"] = strength
+
+                      for idx in range(len(names) + 1, 5):
+                          inp[f"lora_{idx:02d}"] = "None"
+                          inp[f"strength_{idx:02d}"] = 0.0
 
                       return
 
