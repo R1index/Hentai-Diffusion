@@ -770,11 +770,47 @@ class WorkflowManager:
         logger.debug("Applied seed '%s' to node '%s' in workflow '%s'", seed, node_key, workflow_name)
         return workflow_json
 
+
+    def apply_controlnet_strength(self, workflow_json: dict, workflow_config: dict, workflow_name: str,
+                                  controlnet_strength: Optional[float]) -> dict:
+        """Apply ControlNet strength if workflow exposes a target node."""
+
+        if controlnet_strength is None:
+            return workflow_json
+
+        node_id = workflow_config.get("controlnet_strength_node_id")
+        if node_id is None:
+            logger.debug(
+                "Workflow '%s' does not define 'controlnet_strength_node_id'; skipping ControlNet strength override",
+                workflow_name,
+            )
+            return workflow_json
+
+        node_key = str(node_id)
+        node = workflow_json.get(node_key)
+        if not node or "inputs" not in node:
+            logger.debug(
+                "ControlNet node '%s' missing or has no inputs in workflow '%s'",
+                node_key,
+                workflow_name,
+            )
+            return workflow_json
+
+        node["inputs"]["strength"] = float(controlnet_strength)
+        logger.debug(
+            "Applied ControlNet strength '%s' to node '%s' in workflow '%s'",
+            controlnet_strength,
+            node_key,
+            workflow_name,
+        )
+        return workflow_json
+
     def prepare_workflow(self, workflow_name: str, prompt: str = None,
                          settings: Optional[str] = None,
                          resolution: Optional[str] = None,
                          image_data: Optional[bytes] = None,
-                         seed: Optional[int] = None) -> dict:
+                         seed: Optional[int] = None,
+                         controlnet_strength: Optional[float] = None) -> dict:
         """Prepare a workflow with prompt, settings, and image data"""
         try:
             workflow_config = self.get_workflow(workflow_name)
@@ -802,6 +838,14 @@ class WorkflowManager:
 
             # Apply settings
             workflow_json = self.apply_settings(workflow_json, workflow_config, settings)
+
+            # Apply optional ControlNet strength override.
+            workflow_json = self.apply_controlnet_strength(
+                workflow_json,
+                workflow_config,
+                workflow_name,
+                controlnet_strength,
+            )
 
             # Apply explicit seed last so user-provided seed is never overridden by settings hooks.
             workflow_json = self.apply_seed(

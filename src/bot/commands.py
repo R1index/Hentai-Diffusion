@@ -105,6 +105,7 @@ def reforge_command(bot):
         lora_preset="Select a LoRA preset (optional)",
         seed="Seed value (optional)",
         resolution="Select the output resolution (optional)",
+        controlnet_strength="ControlNet strength (optional, for workflows that support it)",
         workflow="The workflow to use (optional)",
         settings="Additional settings (optional)"
     )
@@ -117,6 +118,7 @@ def reforge_command(bot):
             lora_preset: Optional[str] = None,
             seed: Optional[int] = None,
             resolution: Optional[app_commands.Choice[str]] = None,
+            controlnet_strength: Optional[float] = None,
             workflow: Optional[str] = None,
         settings: Optional[str] = None
     ):
@@ -128,6 +130,7 @@ def reforge_command(bot):
             workflow,
             settings,
             resolution=selected_resolution,
+            controlnet_strength=controlnet_strength,
             prompt_preset=prompt_preset,
             model_preset=model_preset,
             lora_preset=lora_preset,
@@ -164,6 +167,7 @@ def img2img_command(bot):
         lora_preset="Select a LoRA preset (optional)",
         seed="Seed value (optional)",
         resolution="Select the output resolution (optional)",
+        controlnet_strength="ControlNet strength (optional, for workflows that support it)",
         workflow="The workflow to use (optional)",
         settings="Additional settings (optional)"
     )
@@ -176,6 +180,7 @@ def img2img_command(bot):
             lora_preset: Optional[str] = None,
             seed: Optional[int] = None,
             resolution: Optional[app_commands.Choice[str]] = None,
+            controlnet_strength: Optional[float] = None,
             workflow: Optional[str] = None,
             settings: Optional[str] = None
     ):
@@ -187,6 +192,7 @@ def img2img_command(bot):
             workflow,
             settings,
             resolution=selected_resolution,
+            controlnet_strength=controlnet_strength,
             prompt_preset=prompt_preset,
             model_preset=model_preset,
             lora_preset=lora_preset,

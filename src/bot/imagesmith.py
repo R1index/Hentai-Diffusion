@@ -1229,6 +1229,7 @@ class ComfyUIBot(commands.Bot):
         model_preset: Optional[str] = None,
         lora_preset: Optional[str] = None,
         seed: Optional[int] = None,
+        controlnet_strength: Optional[float] = None,
         input_image: Optional[discord.Attachment] = None,
         **_: Any,
     ) -> None:
@@ -1244,6 +1245,10 @@ class ComfyUIBot(commands.Bot):
 
         if not await self._is_member_of_access_guild(interaction):
             await self._send_access_guild_required_message(interaction)
+            return
+
+        if controlnet_strength is not None and controlnet_strength < 0:
+            await self._send_error_message(interaction, "ControlNet strength must be >= 0.")
             return
 
         tier = await self._determine_user_tier(interaction)
@@ -1371,6 +1376,7 @@ class ComfyUIBot(commands.Bot):
                 settings_with_presets,
                 resolution,
                 input_image,
+                controlnet_strength,
                 context,
             )
 
@@ -1389,6 +1395,7 @@ class ComfyUIBot(commands.Bot):
         settings: Optional[str],
         resolution: Optional[str],
         input_image: Optional[discord.Attachment],
+        controlnet_strength: Optional[float],
         context: GenerationContext,
     ) -> None:
         workflow_name = workflow or self.workflow_manager.get_default_workflow(workflow_type)
@@ -1481,6 +1488,7 @@ class ComfyUIBot(commands.Bot):
             context.resolution,
             image_data,
             context.seed,
+            controlnet_strength,
             priority=context.tier.queue_priority,
         )
     async def _run_generation_pipeline(
@@ -1493,6 +1501,7 @@ class ComfyUIBot(commands.Bot):
         resolution: Optional[str],
         image_data: Optional[bytes],
         seed: Optional[int],
+        controlnet_strength: Optional[float],
     ) -> None:
         start_ts = time.time()
         context.workflow_name = workflow_name
@@ -1516,6 +1525,7 @@ class ComfyUIBot(commands.Bot):
                 context.resolution,
                 image_data,
                 seed=context.seed,
+                controlnet_strength=controlnet_strength,
             )
 
             if context.cancel_event.is_set():
