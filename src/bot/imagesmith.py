@@ -22,7 +22,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from logger import logger
-from .commands import profile_command, rgen_command, workflows_command
+from .commands import img2img_command, profile_command, reforge_command, rgen_command, workflows_command
 from ..comfy.client import ComfyUIClient
 from ..comfy.workflow_manager import WorkflowManager
 from ..core.generation_queue import GenerationQueue
@@ -708,6 +708,8 @@ class ComfyUIBot(commands.Bot):
         logger.info("Registering slash commands")
         try:
             self.tree.add_command(rgen_command(self))
+            self.tree.add_command(img2img_command(self))
+            self.tree.add_command(reforge_command(self))
             self.tree.add_command(workflows_command(self))
             self.tree.add_command(self._create_limits_command())
             self.tree.add_command(self._create_spoiler_command())

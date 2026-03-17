@@ -315,6 +315,15 @@ workflows:
                   safe_set(43, "unet_name", "anima_preview.safetensors")
 
 
+  IMG2IMG:
+    type: img2img
+    description: Workflow image-to-image based on attached input image.
+    workflow: ./workflows/IMG2IMG.json
+    text_prompt_node_id: 32
+    image_input_node_id: 53
+    default: true
+    seed_node_id: 18
+
 security:
   access_guild_id: 1305851922644992080
   supporter_role_id: 1361296590777745560

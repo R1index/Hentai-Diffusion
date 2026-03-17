@@ -132,6 +132,53 @@ def reforge_command(bot):
     return app_commands.autocomplete(lora_preset=lora_autocomplete)(reforge)
 
 
+def img2img_command(bot):
+    """Create the img2img command for image-to-image generation"""
+
+    @app_commands.command(
+        name="img2img",
+        description="Generate an image from an attached source image"
+    )
+    @app_commands.describe(
+        image="Source image",
+        prompt="Description of the changes you want to make",
+        prompt_preset="Select a prompt preset (optional)",
+        model_preset="Select a model preset (optional)",
+        lora_preset="Select a LoRA preset (optional)",
+        seed="Seed value (optional)",
+        workflow="The workflow to use (optional)",
+        settings="Additional settings (optional)"
+    )
+    async def img2img(
+            interaction: discord.Interaction,
+            image: discord.Attachment,
+            prompt: str,
+            prompt_preset: Optional[str] = None,
+            model_preset: Optional[str] = None,
+            lora_preset: Optional[str] = None,
+            seed: Optional[int] = None,
+            workflow: Optional[str] = None,
+            settings: Optional[str] = None
+    ):
+        await bot.handle_generation(
+            interaction,
+            'img2img',
+            prompt,
+            workflow,
+            settings,
+            prompt_preset=prompt_preset,
+            model_preset=model_preset,
+            lora_preset=lora_preset,
+            seed=seed,
+            input_image=image,
+        )
+
+    prompt_autocomplete, model_autocomplete, lora_autocomplete = _preset_autocompletes(bot)
+    img2img = app_commands.autocomplete(prompt_preset=prompt_autocomplete)(img2img)
+    img2img = app_commands.autocomplete(model_preset=model_autocomplete)(img2img)
+    return app_commands.autocomplete(lora_preset=lora_autocomplete)(img2img)
+
+
 def upscale_command(bot):
     """Create the upscale command"""
 
