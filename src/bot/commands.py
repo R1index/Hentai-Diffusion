@@ -88,6 +88,11 @@ def rgen_command(bot):
 def reforge_command(bot):
     """Create the reforge command for img2img generation"""
 
+    resolution_choices = [
+        app_commands.Choice(name=label, value=value)
+        for label, value in bot.workflow_manager.get_resolution_presets()[:25]
+    ]
+
     @app_commands.command(
         name="reforge",
         description="Reforge an existing image using image-to-image"
@@ -99,6 +104,7 @@ def reforge_command(bot):
         model_preset="Select a model preset (optional)",
         lora_preset="Select a LoRA preset (optional)",
         seed="Seed value (optional)",
+        resolution="Select the output resolution (optional)",
         workflow="The workflow to use (optional)",
         settings="Additional settings (optional)"
     )
@@ -110,21 +116,27 @@ def reforge_command(bot):
             model_preset: Optional[str] = None,
             lora_preset: Optional[str] = None,
             seed: Optional[int] = None,
+            resolution: Optional[app_commands.Choice[str]] = None,
             workflow: Optional[str] = None,
         settings: Optional[str] = None
     ):
+        selected_resolution = resolution.value if resolution else None
         await bot.handle_generation(
             interaction,
             'img2img',
             prompt,
             workflow,
             settings,
+            resolution=selected_resolution,
             prompt_preset=prompt_preset,
             model_preset=model_preset,
             lora_preset=lora_preset,
             seed=seed,
             input_image=image,
         )
+
+    if resolution_choices:
+        reforge = app_commands.choices(resolution=resolution_choices)(reforge)
 
     prompt_autocomplete, model_autocomplete, lora_autocomplete = _preset_autocompletes(bot)
     reforge = app_commands.autocomplete(prompt_preset=prompt_autocomplete)(reforge)
@@ -134,6 +146,11 @@ def reforge_command(bot):
 
 def img2img_command(bot):
     """Create the img2img command for image-to-image generation"""
+
+    resolution_choices = [
+        app_commands.Choice(name=label, value=value)
+        for label, value in bot.workflow_manager.get_resolution_presets()[:25]
+    ]
 
     @app_commands.command(
         name="img2img",
@@ -146,6 +163,7 @@ def img2img_command(bot):
         model_preset="Select a model preset (optional)",
         lora_preset="Select a LoRA preset (optional)",
         seed="Seed value (optional)",
+        resolution="Select the output resolution (optional)",
         workflow="The workflow to use (optional)",
         settings="Additional settings (optional)"
     )
@@ -157,21 +175,27 @@ def img2img_command(bot):
             model_preset: Optional[str] = None,
             lora_preset: Optional[str] = None,
             seed: Optional[int] = None,
+            resolution: Optional[app_commands.Choice[str]] = None,
             workflow: Optional[str] = None,
             settings: Optional[str] = None
     ):
+        selected_resolution = resolution.value if resolution else None
         await bot.handle_generation(
             interaction,
             'img2img',
             prompt,
             workflow,
             settings,
+            resolution=selected_resolution,
             prompt_preset=prompt_preset,
             model_preset=model_preset,
             lora_preset=lora_preset,
             seed=seed,
             input_image=image,
         )
+
+    if resolution_choices:
+        img2img = app_commands.choices(resolution=resolution_choices)(img2img)
 
     prompt_autocomplete, model_autocomplete, lora_autocomplete = _preset_autocompletes(bot)
     img2img = app_commands.autocomplete(prompt_preset=prompt_autocomplete)(img2img)

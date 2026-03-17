@@ -322,6 +322,8 @@ workflows:
     text_prompt_node_id: 32
     image_input_node_id: 53
     default: true
+    default_resolution: landscape - 1216x832 (3:2)
+    resolution_node_id: 21
     seed_node_id: 18
 
 security:
