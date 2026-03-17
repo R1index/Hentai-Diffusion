@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import uuid
 from dataclasses import dataclass
@@ -85,8 +86,26 @@ class WorkflowManager:
 
         self._config_dir = self.config_path.parent
 
-        # Get ComfyUI input directory from config
-        self.input_dir = Path(self.config.get('comfyui', {}).get('input_dir', 'input'))
+        # Get ComfyUI input directory from config (supports env placeholders).
+        configured_input_dir = str(self.config.get('comfyui', {}).get('input_dir', 'input')).strip()
+        expanded_input_dir = os.path.expandvars(configured_input_dir)
+
+        # Handle plain env token style, e.g. "COMFYUI_INPUT_DIR".
+        if (
+            expanded_input_dir == configured_input_dir
+            and configured_input_dir
+            and configured_input_dir.isupper()
+            and configured_input_dir in os.environ
+        ):
+            expanded_input_dir = os.environ[configured_input_dir]
+
+        if expanded_input_dir == configured_input_dir and configured_input_dir.isupper() and configured_input_dir not in os.environ:
+            logger.warning(
+                "ComfyUI input_dir '%s' looks like env var name but is not set; using local path",
+                configured_input_dir,
+            )
+
+        self.input_dir = Path(expanded_input_dir)
         if not self.input_dir.is_absolute():
             # If relative path, make it relative to the config file location
             self.input_dir = self._config_dir / self.input_dir
