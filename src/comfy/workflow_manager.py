@@ -504,9 +504,28 @@ class WorkflowManager:
                 # Update node with image path
                 node = modified_workflow[node_id]
                 if 'inputs' in node and 'image' in node['inputs']:
-                    # Just use the filename for ComfyUI
-                    node['inputs']['image'] = filename
-                    logger.debug(f"Updated image in node {node_id} with filename: {filename}")
+                    class_type = str(node.get('class_type', ''))
+
+                    # VHS_LoadImagePath expects a full file path string.
+                    # Standard ComfyUI LoadImage-like nodes expect only a filename.
+                    if class_type == 'VHS_LoadImagePath':
+                        image_value = str(file_path)
+                        logger.debug(
+                            "Updated image in node %s (%s) with full path: %s",
+                            node_id,
+                            class_type,
+                            image_value,
+                        )
+                    else:
+                        image_value = filename
+                        logger.debug(
+                            "Updated image in node %s (%s) with filename: %s",
+                            node_id,
+                            class_type or 'unknown',
+                            image_value,
+                        )
+
+                    node['inputs']['image'] = image_value
                 else:
                     raise ValueError(f"Node {node_id} does not have 'image' input")
 
