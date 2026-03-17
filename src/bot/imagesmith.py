@@ -86,6 +86,7 @@ class ComfyUIBot(commands.Bot):
     STATS_RETENTION_DAYS = 90
     MAX_INPUT_IMAGE_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB
     ALLOWED_IMAGE_MIME_TYPES = {"image/png"}
+    IMG2IMG_ALLOWED_ROLE_IDS = {1451768900453925030, 1451769149045997588}
 
     def __init__(self, configuration_path: str = "configuration.yml", plugins_path: str = "plugins"):
         intents = discord.Intents.default()
@@ -1251,6 +1252,10 @@ class ComfyUIBot(commands.Bot):
             await self._send_access_guild_required_message(interaction)
             return
 
+        if workflow_type == "img2img" and not await self._has_img2img_access_role(interaction):
+            await self._send_img2img_role_required_message(interaction)
+            return
+
         if controlnet_strength is not None and controlnet_strength < 0:
             await self._send_error_message(interaction, "ControlNet strength must be >= 0.")
             return
@@ -1981,6 +1986,25 @@ class ComfyUIBot(commands.Bot):
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("access-guild: failed %s", exc)
             return False
+
+    async def _has_img2img_access_role(self, interaction: discord.Interaction) -> bool:
+        member = await self._get_access_member(interaction)
+        if not member:
+            return False
+
+        role_ids = {role.id for role in getattr(member, "roles", [])}
+        return bool(role_ids.intersection(self.IMG2IMG_ALLOWED_ROLE_IDS))
+
+    async def _send_img2img_role_required_message(self, interaction: discord.Interaction) -> None:
+        embed = ui_embeds.build_notice_embed(
+            title="🔒 IMG2IMG restricted",
+            description=(
+                "IMG2IMG is available only for Level 3 / Level 4 roles.\n"
+                "Required role IDs: `1451768900453925030`, `1451769149045997588`."
+            ),
+            color=ui_embeds.ERROR_COLOR,
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     async def _send_access_guild_required_message(self, interaction: discord.Interaction) -> None:
         embed = ui_embeds.build_notice_embed(
