@@ -45,7 +45,7 @@ class LoRAPreset:
 class WorkflowManager:
     """Manages ComfyUI workflows and their configurations"""
     def __init__(self, config_path: str):
-        self.config_path = Path(config_path)
+        self.config_path = Path(config_path).resolve()
         self.config = self._load_config(config_path)
         self.workflows = self.config['workflows']
         self.default_workflow = self.config.get('default_workflow')
@@ -89,8 +89,7 @@ class WorkflowManager:
         self.input_dir = Path(self.config.get('comfyui', {}).get('input_dir', 'input'))
         if not self.input_dir.is_absolute():
             # If relative path, make it relative to the config file location
-            config_dir = Path(config_path).parent
-            self.input_dir = config_dir / self.input_dir
+            self.input_dir = self._config_dir / self.input_dir
 
         # Ensure input directory exists
         self.input_dir.mkdir(parents=True, exist_ok=True)
@@ -488,6 +487,7 @@ class WorkflowManager:
 
         # Update image if provided and node is configured
         if image_data and 'image_input_node_id' in workflow_config:
+            file_path: Optional[Path] = None
             try:
                 node_id = str(workflow_config['image_input_node_id'])
                 if node_id not in modified_workflow:
@@ -512,7 +512,7 @@ class WorkflowManager:
 
             except Exception as e:
                 logger.error(f"Error updating image node: {e}")
-                if file_path.exists():
+                if file_path and file_path.exists():
                     try:
                         file_path.unlink()  # Clean up the file if there was an error
                     except:
@@ -558,8 +558,13 @@ class WorkflowManager:
         return None
 
     def load_workflow_file(self, workflow_path: str) -> dict:
-        """Load workflow JSON file"""
-        with open(workflow_path, 'r') as f:
+        """Load workflow JSON file."""
+
+        path = Path(workflow_path)
+        if not path.is_absolute():
+            path = self._config_dir / path
+
+        with open(path, 'r', encoding='utf-8') as f:
             return json.load(f)
 
     def _apply_setting(self, workflow_json: dict, setting_name: str, setting_def: dict, params: list[str] = None):
@@ -668,7 +673,40 @@ class WorkflowManager:
                 resolution,
             )
 
-        inputs['resolution'] = resolution
+        # Different workflow nodes expect different input names for resolution.
+        # Examples:
+        # - Some nodes read plain "resolution"
+        # - `SDXL Empty Latent Image (rgthree)` reads "dimensions" and validates
+        #   it strictly against a fixed list (including exact spacing).
+        if 'resolution' in inputs:
+            inputs['resolution'] = resolution
+
+        normalized_resolution = str(resolution).strip().lower()
+        resolution_match = re.search(r'(\d+)\s*x\s*(\d+)', normalized_resolution)
+        if resolution_match:
+            width = int(resolution_match.group(1))
+            height = int(resolution_match.group(2))
+
+            if width == height:
+                orientation = "square"
+            elif width > height:
+                orientation = "landscape"
+            else:
+                orientation = "portrait"
+
+            # Keep formatting compatible with rgthree enum values.
+            # Examples:
+            # - "1216 x 832   (landscape)"
+            # - " 832 x 1216  (portrait)"
+            # - "1024 x 1024  (square)"
+            if 'dimensions' in inputs:
+                inputs['dimensions'] = f"{width:>4} x {height:<4}  ({orientation})"
+
+            if 'width' in inputs:
+                inputs['width'] = width
+            if 'height' in inputs:
+                inputs['height'] = height
+
         logger.debug(
             "Applied resolution '%s' to node '%s' in workflow '%s'",
             resolution,

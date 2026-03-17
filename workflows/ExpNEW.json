@@ -76,7 +76,7 @@
         0
       ],
       "model": [
-        "6",
+        "41",
         0
       ],
       "clip": [
@@ -163,7 +163,7 @@
       "scheduler": "sgm_uniform",
       "denoise": 0.5,
       "model": [
-        "6",
+        "41",
         0
       ],
       "positive": [
@@ -196,7 +196,7 @@
       "scheduler": "sgm_uniform",
       "denoise": 1,
       "model": [
-        "6",
+        "41",
         0
       ],
       "positive": [
@@ -258,8 +258,8 @@
     "inputs": {
       "text": "",
       "clip": [
-        "31",
-        0
+        "41",
+        1
       ]
     },
     "class_type": "CLIPTextEncode",
@@ -271,8 +271,8 @@
     "inputs": {
       "text": "bad quality, worst quality, lowres, bad anatomy, extra limbs, deformed, mutated, long neck, bad hands, missing fingers, fused fingers, cloned face, duplicate, blurry, jpeg artifacts, text, watermark, logo, censored, sketch, anatomical nonsense, worst detail, wet, bar censor,",
       "clip": [
-        "31",
-        0
+        "41",
+        1
       ]
     },
     "class_type": "CLIPTextEncode",
@@ -358,7 +358,7 @@
         0
       ],
       "model": [
-        "6",
+        "41",
         0
       ],
       "clip": [
@@ -398,6 +398,30 @@
     "class_type": "UltralyticsDetectorProvider",
     "_meta": {
       "title": "UltralyticsDetectorProvider"
+    }
+  },
+  "41": {
+    "inputs": {
+      "lora_01": "None",
+      "strength_01": 1,
+      "lora_02": "None",
+      "strength_02": 1,
+      "lora_03": "None",
+      "strength_03": 1,
+      "lora_04": "None",
+      "strength_04": 1,
+      "model": [
+        "6",
+        0
+      ],
+      "clip": [
+        "31",
+        0
+      ]
+    },
+    "class_type": "Lora Loader Stack (rgthree)",
+    "_meta": {
+      "title": "Lora Loader Stack (rgthree)"
     }
   }
 }
