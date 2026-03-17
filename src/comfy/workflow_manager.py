@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import uuid
 from dataclasses import dataclass
@@ -85,8 +86,36 @@ class WorkflowManager:
 
         self._config_dir = self.config_path.parent
 
-        # Get ComfyUI input directory from config
-        self.input_dir = Path(self.config.get('comfyui', {}).get('input_dir', 'input'))
+        # Get ComfyUI input directory from config (supports env placeholders).
+        configured_input_dir = str(self.config.get('comfyui', {}).get('input_dir', 'input')).strip()
+        expanded_input_dir = os.path.expandvars(configured_input_dir)
+
+        # Handle plain env token style, e.g. "COMFYUI_INPUT_DIR".
+        if (
+            expanded_input_dir == configured_input_dir
+            and configured_input_dir
+            and configured_input_dir.isupper()
+            and configured_input_dir in os.environ
+        ):
+            expanded_input_dir = os.environ[configured_input_dir]
+
+        guessed_input_dir = None
+        if expanded_input_dir == configured_input_dir and configured_input_dir.isupper() and configured_input_dir not in os.environ:
+            guessed_input_dir = self._guess_local_comfy_input_dir()
+            if guessed_input_dir is not None:
+                logger.warning(
+                    "ComfyUI input_dir env '%s' is not set; auto-detected local input dir: %s",
+                    configured_input_dir,
+                    guessed_input_dir,
+                )
+                expanded_input_dir = str(guessed_input_dir)
+            else:
+                logger.warning(
+                    "ComfyUI input_dir '%s' looks like env var name but is not set; using local path",
+                    configured_input_dir,
+                )
+
+        self.input_dir = Path(expanded_input_dir)
         if not self.input_dir.is_absolute():
             # If relative path, make it relative to the config file location
             self.input_dir = self._config_dir / self.input_dir
@@ -94,6 +123,29 @@ class WorkflowManager:
         # Ensure input directory exists
         self.input_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Using ComfyUI input directory: {self.input_dir}")
+
+    def _guess_local_comfy_input_dir(self) -> Optional[Path]:
+        """Best-effort detection for common local ComfyUI input directories."""
+
+        candidates = [
+            self._config_dir / "ComfyUI" / "input",
+            self._config_dir / "comfyui" / "input",
+            self._config_dir.parent / "ComfyUI" / "input",
+            self._config_dir.parent / "comfyui" / "input",
+            Path.cwd() / "ComfyUI" / "input",
+            Path.cwd() / "comfyui" / "input",
+            Path.cwd() / "input",
+            self._config_dir / "input",
+        ]
+
+        for candidate in candidates:
+            try:
+                if candidate.exists() and candidate.is_dir():
+                    return candidate.resolve()
+            except OSError:
+                continue
+
+        return None
 
     def _parse_resolution_presets(self, raw_presets: Optional[list]) -> List[Tuple[str, str]]:
         presets: List[Tuple[str, str]] = []
@@ -471,6 +523,19 @@ class WorkflowManager:
 
         return any(value == resolution for _, value in self._resolution_presets)
 
+    @staticmethod
+    def _detect_image_extension(image_data: bytes) -> str:
+        """Detect file extension by magic bytes for ComfyUI LoadImage compatibility."""
+
+        if image_data.startswith(b"\x89PNG\r\n\x1a\n"):
+            return "png"
+        if image_data.startswith(b"\xff\xd8\xff"):
+            return "jpg"
+        if image_data.startswith(b"RIFF") and image_data[8:12] == b"WEBP":
+            return "webp"
+
+        return "png"
+
     def update_workflow_nodes(self, workflow_json: dict, workflow_config: dict,
                               prompt: str = None, image_data: bytes = None) -> dict:
         """Update workflow nodes with prompt and/or image data"""
@@ -493,8 +558,9 @@ class WorkflowManager:
                 if node_id not in modified_workflow:
                     raise ValueError(f"Node ID {node_id} not found in workflow")
 
-                # Create a unique filename
-                filename = f"input_{uuid.uuid4()}.png"
+                # Create a unique filename with extension matching file content.
+                extension = self._detect_image_extension(image_data)
+                filename = f"input_{uuid.uuid4()}.{extension}"
                 file_path = self.input_dir / filename
 
                 # Save the image
