@@ -99,11 +99,21 @@ class WorkflowManager:
         ):
             expanded_input_dir = os.environ[configured_input_dir]
 
+        guessed_input_dir = None
         if expanded_input_dir == configured_input_dir and configured_input_dir.isupper() and configured_input_dir not in os.environ:
-            logger.warning(
-                "ComfyUI input_dir '%s' looks like env var name but is not set; using local path",
-                configured_input_dir,
-            )
+            guessed_input_dir = self._guess_local_comfy_input_dir()
+            if guessed_input_dir is not None:
+                logger.warning(
+                    "ComfyUI input_dir env '%s' is not set; auto-detected local input dir: %s",
+                    configured_input_dir,
+                    guessed_input_dir,
+                )
+                expanded_input_dir = str(guessed_input_dir)
+            else:
+                logger.warning(
+                    "ComfyUI input_dir '%s' looks like env var name but is not set; using local path",
+                    configured_input_dir,
+                )
 
         self.input_dir = Path(expanded_input_dir)
         if not self.input_dir.is_absolute():
@@ -113,6 +123,29 @@ class WorkflowManager:
         # Ensure input directory exists
         self.input_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Using ComfyUI input directory: {self.input_dir}")
+
+    def _guess_local_comfy_input_dir(self) -> Optional[Path]:
+        """Best-effort detection for common local ComfyUI input directories."""
+
+        candidates = [
+            self._config_dir / "ComfyUI" / "input",
+            self._config_dir / "comfyui" / "input",
+            self._config_dir.parent / "ComfyUI" / "input",
+            self._config_dir.parent / "comfyui" / "input",
+            Path.cwd() / "ComfyUI" / "input",
+            Path.cwd() / "comfyui" / "input",
+            Path.cwd() / "input",
+            self._config_dir / "input",
+        ]
+
+        for candidate in candidates:
+            try:
+                if candidate.exists() and candidate.is_dir():
+                    return candidate.resolve()
+            except OSError:
+                continue
+
+        return None
 
     def _parse_resolution_presets(self, raw_presets: Optional[list]) -> List[Tuple[str, str]]:
         presets: List[Tuple[str, str]] = []
