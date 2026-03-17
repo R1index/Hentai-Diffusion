@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import hmac
 import importlib
+import io
 import inspect
 import json
 import os
@@ -20,6 +21,7 @@ import discord
 import yaml
 from discord import app_commands
 from discord.ext import commands, tasks
+from PIL import Image, UnidentifiedImageError
 
 from logger import logger
 from .commands import img2img_command, profile_command, reforge_command, rgen_command, workflows_command
@@ -82,6 +84,8 @@ class ComfyUIBot(commands.Bot):
     GENERATION_COUNTS_FILE = "generation_counts.yml"
     QUEUE_STUCK_THRESHOLD = 1800  # 30 minutes
     STATS_RETENTION_DAYS = 90
+    MAX_INPUT_IMAGE_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB
+    ALLOWED_IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/webp"}
 
     def __init__(self, configuration_path: str = "configuration.yml", plugins_path: str = "plugins"):
         intents = discord.Intents.default()
@@ -1386,6 +1390,81 @@ class ComfyUIBot(commands.Bot):
             logger.error("Generation error: %s", exc, exc_info=True)
             self._finalize_generation_context(context, success=False)
             raise
+    def _detect_image_format_by_magic(self, image_data: bytes) -> Optional[str]:
+        """Detect image format by magic bytes."""
+
+        if image_data.startswith(b"\x89PNG\r\n\x1a\n"):
+            return "PNG"
+        if len(image_data) >= 3 and image_data[:3] == b"\xff\xd8\xff":
+            return "JPEG"
+        if len(image_data) >= 12 and image_data[:4] == b"RIFF" and image_data[8:12] == b"WEBP":
+            return "WEBP"
+        return None
+
+    def _sanitize_input_image(self, image_data: bytes, detected_format: str) -> bytes:
+        """Decode and re-encode image payload to strip potentially unsafe metadata/chunks."""
+
+        source = io.BytesIO(image_data)
+        with Image.open(source) as img:
+            img.load()
+
+            if detected_format == "JPEG":
+                processed = img.convert("RGB")
+            else:
+                processed = img.convert("RGBA") if "A" in img.getbands() else img.convert("RGB")
+
+            output = io.BytesIO()
+            save_kwargs: Dict[str, Any] = {"format": detected_format}
+            if detected_format == "JPEG":
+                save_kwargs.update({"quality": 95, "optimize": True})
+            elif detected_format == "WEBP":
+                save_kwargs.update({"lossless": True, "quality": 100})
+
+            processed.save(output, **save_kwargs)
+            return output.getvalue()
+
+    async def _validate_and_sanitize_attachment_image(self, input_image: discord.Attachment) -> bytes:
+        """Validate MIME/magic bytes, enforce size limit, then decode/re-encode image."""
+
+        if input_image.size and input_image.size > self.MAX_INPUT_IMAGE_SIZE_BYTES:
+            max_mb = self.MAX_INPUT_IMAGE_SIZE_BYTES // (1024 * 1024)
+            raise ValueError(f"Image is too large. Maximum allowed size is {max_mb} MB.")
+
+        declared_mime = (input_image.content_type or "").lower().strip()
+        if declared_mime and declared_mime not in self.ALLOWED_IMAGE_MIME_TYPES:
+            raise ValueError("Only PNG, JPEG, and WEBP images are supported.")
+
+        image_data = await input_image.read()
+        if not image_data:
+            raise ValueError("Attached image is empty.")
+
+        if len(image_data) > self.MAX_INPUT_IMAGE_SIZE_BYTES:
+            max_mb = self.MAX_INPUT_IMAGE_SIZE_BYTES // (1024 * 1024)
+            raise ValueError(f"Image is too large. Maximum allowed size is {max_mb} MB.")
+
+        detected_format = self._detect_image_format_by_magic(image_data)
+        if not detected_format:
+            raise ValueError("Unsupported image format or invalid file signature.")
+
+        expected_mime = {
+            "PNG": "image/png",
+            "JPEG": "image/jpeg",
+            "WEBP": "image/webp",
+        }[detected_format]
+        if declared_mime and declared_mime != expected_mime:
+            raise ValueError("Image MIME type does not match file signature.")
+
+        try:
+            sanitized = self._sanitize_input_image(image_data, detected_format)
+        except UnidentifiedImageError as exc:
+            raise ValueError("Could not decode image payload.") from exc
+
+        if len(sanitized) > self.MAX_INPUT_IMAGE_SIZE_BYTES:
+            max_mb = self.MAX_INPUT_IMAGE_SIZE_BYTES // (1024 * 1024)
+            raise ValueError(f"Processed image exceeds size limit ({max_mb} MB).")
+
+        return sanitized
+
     async def _process_generation(
         self,
         interaction: discord.Interaction,
@@ -1449,16 +1528,27 @@ class ComfyUIBot(commands.Bot):
 
         image_data: Optional[bytes] = None
         if workflow_type in ["img2img", "upscale"]:
-            if not input_image or not input_image.filename.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+            if not input_image:
                 embed = ui_embeds.build_notice_embed(
                     title="❌ Invalid image",
-                    description="Provide a valid PNG/JPG/JPEG/WEBP image for this workflow.",
+                    description="Attach an image for this workflow.",
                     color=ui_embeds.ERROR_COLOR,
                 )
                 await interaction.response.send_message(embed=embed, ephemeral=True)
                 self._finalize_generation_context(context, success=False)
                 return
-            image_data = await input_image.read()
+
+            try:
+                image_data = await self._validate_and_sanitize_attachment_image(input_image)
+            except ValueError as exc:
+                embed = ui_embeds.build_notice_embed(
+                    title="❌ Invalid image",
+                    description=str(exc),
+                    color=ui_embeds.ERROR_COLOR,
+                )
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+                self._finalize_generation_context(context, success=False)
+                return
 
         queue_position = self.generation_queue.get_queue_position()
         total_queue = self.generation_queue.size() + 1
