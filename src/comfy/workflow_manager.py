@@ -1,4 +1,5 @@
 import json
+import random
 import re
 import uuid
 from dataclasses import dataclass
@@ -747,10 +748,7 @@ class WorkflowManager:
 
     def apply_seed(self, workflow_json: dict, workflow_config: dict, workflow_name: str,
                    seed: Optional[int]) -> dict:
-        """Apply a specific seed if provided."""
-
-        if seed is None:
-            return workflow_json
+        """Apply a fixed or random seed."""
 
         node_id = workflow_config.get("seed_node_id")
         if node_id is None:
@@ -766,8 +764,9 @@ class WorkflowManager:
             logger.debug("Seed node '%s' missing or has no inputs in workflow '%s'", node_key, workflow_name)
             return workflow_json
 
-        node["inputs"]["seed"] = int(seed)
-        logger.debug("Applied seed '%s' to node '%s' in workflow '%s'", seed, node_key, workflow_name)
+        seed_to_apply = int(seed) if seed is not None else random.randint(0, 2**32 - 1)
+        node["inputs"]["seed"] = seed_to_apply
+        logger.debug("Applied seed '%s' to node '%s' in workflow '%s'", seed_to_apply, node_key, workflow_name)
         return workflow_json
 
 
