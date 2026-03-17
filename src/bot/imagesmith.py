@@ -85,7 +85,7 @@ class ComfyUIBot(commands.Bot):
     QUEUE_STUCK_THRESHOLD = 1800  # 30 minutes
     STATS_RETENTION_DAYS = 90
     MAX_INPUT_IMAGE_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB
-    ALLOWED_IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/webp"}
+    ALLOWED_IMAGE_MIME_TYPES = {"image/png"}
 
     def __init__(self, configuration_path: str = "configuration.yml", plugins_path: str = "plugins"):
         intents = discord.Intents.default()
@@ -1390,37 +1390,21 @@ class ComfyUIBot(commands.Bot):
             logger.error("Generation error: %s", exc, exc_info=True)
             self._finalize_generation_context(context, success=False)
             raise
-    def _detect_image_format_by_magic(self, image_data: bytes) -> Optional[str]:
-        """Detect image format by magic bytes."""
+    def _is_png_magic(self, image_data: bytes) -> bool:
+        """Return True if payload has PNG signature."""
 
-        if image_data.startswith(b"\x89PNG\r\n\x1a\n"):
-            return "PNG"
-        if len(image_data) >= 3 and image_data[:3] == b"\xff\xd8\xff":
-            return "JPEG"
-        if len(image_data) >= 12 and image_data[:4] == b"RIFF" and image_data[8:12] == b"WEBP":
-            return "WEBP"
-        return None
+        return image_data.startswith(b"\x89PNG\r\n\x1a\n")
 
-    def _sanitize_input_image(self, image_data: bytes, detected_format: str) -> bytes:
-        """Decode and re-encode image payload to strip potentially unsafe metadata/chunks."""
+    def _sanitize_input_image(self, image_data: bytes) -> bytes:
+        """Decode and re-encode image payload as PNG to strip unsafe metadata/chunks."""
 
         source = io.BytesIO(image_data)
         with Image.open(source) as img:
             img.load()
-
-            if detected_format == "JPEG":
-                processed = img.convert("RGB")
-            else:
-                processed = img.convert("RGBA") if "A" in img.getbands() else img.convert("RGB")
+            processed = img.convert("RGBA") if "A" in img.getbands() else img.convert("RGB")
 
             output = io.BytesIO()
-            save_kwargs: Dict[str, Any] = {"format": detected_format}
-            if detected_format == "JPEG":
-                save_kwargs.update({"quality": 95, "optimize": True})
-            elif detected_format == "WEBP":
-                save_kwargs.update({"lossless": True, "quality": 100})
-
-            processed.save(output, **save_kwargs)
+            processed.save(output, format="PNG", optimize=True)
             return output.getvalue()
 
     async def _validate_and_sanitize_attachment_image(self, input_image: discord.Attachment) -> bytes:
@@ -1432,7 +1416,7 @@ class ComfyUIBot(commands.Bot):
 
         declared_mime = (input_image.content_type or "").lower().strip()
         if declared_mime and declared_mime not in self.ALLOWED_IMAGE_MIME_TYPES:
-            raise ValueError("Only PNG, JPEG, and WEBP images are supported.")
+            raise ValueError("Only PNG images are supported.")
 
         image_data = await input_image.read()
         if not image_data:
@@ -1442,20 +1426,14 @@ class ComfyUIBot(commands.Bot):
             max_mb = self.MAX_INPUT_IMAGE_SIZE_BYTES // (1024 * 1024)
             raise ValueError(f"Image is too large. Maximum allowed size is {max_mb} MB.")
 
-        detected_format = self._detect_image_format_by_magic(image_data)
-        if not detected_format:
-            raise ValueError("Unsupported image format or invalid file signature.")
+        if not self._is_png_magic(image_data):
+            raise ValueError("Only PNG images are supported (magic bytes check failed).")
 
-        expected_mime = {
-            "PNG": "image/png",
-            "JPEG": "image/jpeg",
-            "WEBP": "image/webp",
-        }[detected_format]
-        if declared_mime and declared_mime != expected_mime:
-            raise ValueError("Image MIME type does not match file signature.")
+        if declared_mime and declared_mime != "image/png":
+            raise ValueError("Image MIME type does not match PNG signature.")
 
         try:
-            sanitized = self._sanitize_input_image(image_data, detected_format)
+            sanitized = self._sanitize_input_image(image_data)
         except UnidentifiedImageError as exc:
             raise ValueError("Could not decode image payload.") from exc
 
