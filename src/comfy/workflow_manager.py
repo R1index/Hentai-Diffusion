@@ -471,6 +471,19 @@ class WorkflowManager:
 
         return any(value == resolution for _, value in self._resolution_presets)
 
+    @staticmethod
+    def _detect_image_extension(image_data: bytes) -> str:
+        """Detect file extension by magic bytes for ComfyUI LoadImage compatibility."""
+
+        if image_data.startswith(b"\x89PNG\r\n\x1a\n"):
+            return "png"
+        if image_data.startswith(b"\xff\xd8\xff"):
+            return "jpg"
+        if image_data.startswith(b"RIFF") and image_data[8:12] == b"WEBP":
+            return "webp"
+
+        return "png"
+
     def update_workflow_nodes(self, workflow_json: dict, workflow_config: dict,
                               prompt: str = None, image_data: bytes = None) -> dict:
         """Update workflow nodes with prompt and/or image data"""
@@ -493,8 +506,9 @@ class WorkflowManager:
                 if node_id not in modified_workflow:
                     raise ValueError(f"Node ID {node_id} not found in workflow")
 
-                # Create a unique filename
-                filename = f"input_{uuid.uuid4()}.png"
+                # Create a unique filename with extension matching file content.
+                extension = self._detect_image_extension(image_data)
+                filename = f"input_{uuid.uuid4()}.{extension}"
                 file_path = self.input_dir / filename
 
                 # Save the image
