@@ -800,16 +800,16 @@ class WorkflowManager:
                 resolution,
             )
 
-            # Apply explicit seed if provided
+            # Apply settings
+            workflow_json = self.apply_settings(workflow_json, workflow_config, settings)
+
+            # Apply explicit seed last so user-provided seed is never overridden by settings hooks.
             workflow_json = self.apply_seed(
                 workflow_json,
                 workflow_config,
                 workflow_name,
                 seed,
             )
-
-            # Apply settings
-            workflow_json = self.apply_settings(workflow_json, workflow_config, settings)
 
             return workflow_json
         except Exception as e:
