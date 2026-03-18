@@ -312,12 +312,12 @@ class ComfyUIClient:
             finally:
                 instance.active_generations -= 1
 
-    def _get_image_url(self, instance: ComfyUIInstance, image_data: dict) -> str:
-        """Construct the image URL for a specific instance"""
+    def _get_media_url(self, instance: ComfyUIInstance, media_data: dict) -> Optional[str]:
+        """Construct the media URL for a specific instance."""
         try:
-            filename = image_data.get('filename')
-            subfolder = image_data.get('subfolder', '')
-            type_ = image_data.get('type', 'output')
+            filename = media_data.get('filename')
+            subfolder = media_data.get('subfolder', '')
+            type_ = media_data.get('type', 'output')
 
             params = []
             if filename:
@@ -329,10 +329,10 @@ class ComfyUIClient:
 
             query_string = '&'.join(params)
             url = f"{instance.base_url}/view?{query_string}"
-            logger.debug(f"Generated image URL: {url}")
+            logger.debug(f"Generated media URL: {url}")
             return url
         except Exception as e:
-            logger.error(f"Error generating image URL: {e}")
+            logger.error(f"Error generating media URL: {e}")
             return None
 
     def _create_progress_bar(self, value: int, max_value: int, length: int = 10) -> str:
@@ -347,6 +347,7 @@ class ComfyUIClient:
         prompt_id: str,
         message_callback,
         cancel_event: Optional[asyncio.Event] = None,
+        workflow_type: Optional[str] = None,
     ):
         """Listen for updates about a specific generation."""
 
@@ -437,28 +438,47 @@ class ComfyUIClient:
                     if not isinstance(node_output, dict):
                         continue
 
-                    for image_data in node_output.get('images', []):
-                        if not isinstance(image_data, dict) or 'filename' not in image_data:
-                            continue
+                    is_video_workflow = (workflow_type or "").lower().endswith("vid")
+                    media_groups = []
+                    if is_video_workflow:
+                        media_groups.extend(
+                            [
+                                ("videos", "🎬 New video generated!"),
+                                ("gifs", "🎬 New video generated!"),
+                            ]
+                        )
+                    else:
+                        media_groups.extend(
+                            [
+                                ("images", "🖼 New image generated!"),
+                                ("videos", "🎬 New video generated!"),
+                                ("gifs", "🎬 New video generated!"),
+                            ]
+                        )
 
-                        image_url = self._get_image_url(instance, image_data)
-                        if not image_url:
-                            continue
-
-                        async with session.get(image_url) as response:
-                            if response.status != 200:
+                    for output_key, status_prefix in media_groups:
+                        for media_data in node_output.get(output_key, []):
+                            if not isinstance(media_data, dict) or 'filename' not in media_data:
                                 continue
 
-                            image_bytes = await response.read()
-                            image_file = discord.File(
-                                io.BytesIO(image_bytes),
-                                filename=image_data.get('filename', 'output.png'),
-                            )
-                            elapsed_time = time.time() - start_time
-                            await emit(
-                                f"🖼 New image generated!\n⏱ Time elapsed: {elapsed_time:.2f} seconds",
-                                image_file,
-                            )
+                            media_url = self._get_media_url(instance, media_data)
+                            if not media_url:
+                                continue
+
+                            async with session.get(media_url) as response:
+                                if response.status != 200:
+                                    continue
+
+                                media_bytes = await response.read()
+                                media_file = discord.File(
+                                    io.BytesIO(media_bytes),
+                                    filename=media_data.get('filename', 'output.bin'),
+                                )
+                                elapsed_time = time.time() - start_time
+                                await emit(
+                                    f"{status_prefix}\n⏱ Time elapsed: {elapsed_time:.2f} seconds",
+                                    media_file,
+                                )
 
                 elif msg_type == 'error':
                     error_msg = msg_data.get('error', 'Unknown error')
