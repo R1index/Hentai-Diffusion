@@ -1650,6 +1650,7 @@ class ComfyUIBot(commands.Bot):
                 prompt_id,
                 update,
                 cancel_event=context.cancel_event,
+                workflow_type=workflow_type,
             )
 
             if context.cancel_event.is_set():
