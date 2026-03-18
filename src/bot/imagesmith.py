@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import hmac
 import importlib
+import io
 import inspect
 import json
 import os
@@ -20,9 +21,10 @@ import discord
 import yaml
 from discord import app_commands
 from discord.ext import commands, tasks
+from PIL import Image, UnidentifiedImageError
 
 from logger import logger
-from .commands import profile_command, rgen_command, workflows_command
+from .commands import img2img_command, profile_command, reforge_command, rgen_command, workflows_command
 from ..comfy.client import ComfyUIClient
 from ..comfy.workflow_manager import WorkflowManager
 from ..core.generation_queue import GenerationQueue
@@ -82,6 +84,9 @@ class ComfyUIBot(commands.Bot):
     GENERATION_COUNTS_FILE = "generation_counts.yml"
     QUEUE_STUCK_THRESHOLD = 1800  # 30 minutes
     STATS_RETENTION_DAYS = 90
+    MAX_INPUT_IMAGE_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB
+    ALLOWED_IMAGE_MIME_TYPES = {"image/png"}
+    IMG2IMG_ALLOWED_ROLE_IDS = {1451768900453925030, 1451769149045997588}
 
     def __init__(self, configuration_path: str = "configuration.yml", plugins_path: str = "plugins"):
         intents = discord.Intents.default()
@@ -409,7 +414,7 @@ class ComfyUIBot(commands.Bot):
         embed = ui_embeds.build_limit_embed(
             "You need the **Manage Server** permission to modify spoiler tags."
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await self._send_interaction_message(interaction, embed=embed, ephemeral=True)
         return False
 
     def _load_generation_stats(self, raw_stats: Optional[dict]) -> bool:
@@ -708,6 +713,8 @@ class ComfyUIBot(commands.Bot):
         logger.info("Registering slash commands")
         try:
             self.tree.add_command(rgen_command(self))
+            self.tree.add_command(img2img_command(self))
+            self.tree.add_command(reforge_command(self))
             self.tree.add_command(workflows_command(self))
             self.tree.add_command(self._create_limits_command())
             self.tree.add_command(self._create_spoiler_command())
@@ -1058,7 +1065,7 @@ class ComfyUIBot(commands.Bot):
                     color=ui_embeds.WARNING_COLOR,
                 )
 
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await self._send_interaction_message(interaction, embed=embed, ephemeral=True)
 
         return limits_command
 
@@ -1119,7 +1126,7 @@ class ComfyUIBot(commands.Bot):
                 description=description,
                 color=color,
             )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await self._send_interaction_message(interaction, embed=embed, ephemeral=True)
 
         @spoiler_group.command(name="add", description="Add a tag that will force image spoilers")
         @app_commands.describe(tag="Tag to treat as a spoiler trigger")
@@ -1134,7 +1141,7 @@ class ComfyUIBot(commands.Bot):
                     description="Provide a non-empty tag to add.",
                     color=ui_embeds.ERROR_COLOR,
                 )
-                await interaction.response.send_message(embed=embed, ephemeral=True)
+                await self._send_interaction_message(interaction, embed=embed, ephemeral=True)
                 return
 
             normalized = self._normalize_tag(cleaned)
@@ -1145,7 +1152,7 @@ class ComfyUIBot(commands.Bot):
                     description=f"`{existing}` is already configured as a spoiler tag.",
                     color=ui_embeds.WARNING_COLOR,
                 )
-                await interaction.response.send_message(embed=embed, ephemeral=True)
+                await self._send_interaction_message(interaction, embed=embed, ephemeral=True)
                 return
 
             self._spoiler_tags.add(normalized)
@@ -1162,7 +1169,7 @@ class ComfyUIBot(commands.Bot):
                     description="The tag could not be saved. Check logs for details.",
                     color=ui_embeds.ERROR_COLOR,
                 )
-                await interaction.response.send_message(embed=embed, ephemeral=True)
+                await self._send_interaction_message(interaction, embed=embed, ephemeral=True)
                 return
 
             embed = ui_embeds.build_notice_embed(
@@ -1170,7 +1177,7 @@ class ComfyUIBot(commands.Bot):
                 description=f"Images will now be hidden behind spoilers when prompts include `{cleaned}`.",
                 color=ui_embeds.SUCCESS_COLOR,
             )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await self._send_interaction_message(interaction, embed=embed, ephemeral=True)
 
         @spoiler_group.command(name="remove", description="Remove a configured spoiler tag")
         @app_commands.describe(tag="Tag to remove from the spoiler list")
@@ -1185,7 +1192,7 @@ class ComfyUIBot(commands.Bot):
                     description=f"`{tag}` is not configured as a spoiler tag.",
                     color=ui_embeds.ERROR_COLOR,
                 )
-                await interaction.response.send_message(embed=embed, ephemeral=True)
+                await self._send_interaction_message(interaction, embed=embed, ephemeral=True)
                 return
 
             removed_display = self._spoiler_tag_display.get(normalized, tag)
@@ -1204,7 +1211,7 @@ class ComfyUIBot(commands.Bot):
                     description="The tag could not be removed. Check logs for details.",
                     color=ui_embeds.ERROR_COLOR,
                 )
-                await interaction.response.send_message(embed=embed, ephemeral=True)
+                await self._send_interaction_message(interaction, embed=embed, ephemeral=True)
                 return
 
             embed = ui_embeds.build_notice_embed(
@@ -1212,7 +1219,7 @@ class ComfyUIBot(commands.Bot):
                 description=f"`{removed_display}` will no longer force spoilered images.",
                 color=ui_embeds.SUCCESS_COLOR,
             )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await self._send_interaction_message(interaction, embed=embed, ephemeral=True)
 
         return spoiler_group
     async def handle_generation(
@@ -1227,6 +1234,7 @@ class ComfyUIBot(commands.Bot):
         model_preset: Optional[str] = None,
         lora_preset: Optional[str] = None,
         seed: Optional[int] = None,
+        controlnet_strength: Optional[float] = None,
         input_image: Optional[discord.Attachment] = None,
         **_: Any,
     ) -> None:
@@ -1242,6 +1250,14 @@ class ComfyUIBot(commands.Bot):
 
         if not await self._is_member_of_access_guild(interaction):
             await self._send_access_guild_required_message(interaction)
+            return
+
+        if workflow_type == "img2img" and not await self._has_img2img_access_role(interaction):
+            await self._send_img2img_role_required_message(interaction)
+            return
+
+        if controlnet_strength is not None and controlnet_strength < 0:
+            await self._send_error_message(interaction, "ControlNet strength must be >= 0.")
             return
 
         tier = await self._determine_user_tier(interaction)
@@ -1305,6 +1321,9 @@ class ComfyUIBot(commands.Bot):
         context.force_spoiler = self._prompt_contains_spoiler_tag(final_prompt)
 
         try:
+            if workflow_type in ["img2img", "upscale"] and not interaction.response.is_done():
+                await interaction.response.defer()
+
             if tier.daily_limit is not None:
                 current_usage = self.user_generation_counts[user_id]
                 limit = tier.daily_limit
@@ -1369,6 +1388,7 @@ class ComfyUIBot(commands.Bot):
                 settings_with_presets,
                 resolution,
                 input_image,
+                controlnet_strength,
                 context,
             )
 
@@ -1378,6 +1398,59 @@ class ComfyUIBot(commands.Bot):
             logger.error("Generation error: %s", exc, exc_info=True)
             self._finalize_generation_context(context, success=False)
             raise
+    def _is_png_magic(self, image_data: bytes) -> bool:
+        """Return True if payload has PNG signature."""
+
+        return image_data.startswith(b"\x89PNG\r\n\x1a\n")
+
+    def _sanitize_input_image(self, image_data: bytes) -> bytes:
+        """Decode and re-encode image payload as PNG to strip unsafe metadata/chunks."""
+
+        source = io.BytesIO(image_data)
+        with Image.open(source) as img:
+            img.load()
+            processed = img.convert("RGBA") if "A" in img.getbands() else img.convert("RGB")
+
+            output = io.BytesIO()
+            processed.save(output, format="PNG", optimize=True)
+            return output.getvalue()
+
+    async def _validate_and_sanitize_attachment_image(self, input_image: discord.Attachment) -> bytes:
+        """Validate MIME/magic bytes, enforce size limit, then decode/re-encode image."""
+
+        if input_image.size and input_image.size > self.MAX_INPUT_IMAGE_SIZE_BYTES:
+            max_mb = self.MAX_INPUT_IMAGE_SIZE_BYTES // (1024 * 1024)
+            raise ValueError(f"Image is too large. Maximum allowed size is {max_mb} MB.")
+
+        declared_mime = (input_image.content_type or "").lower().strip()
+        if declared_mime and declared_mime not in self.ALLOWED_IMAGE_MIME_TYPES:
+            raise ValueError("Only PNG images are supported.")
+
+        image_data = await input_image.read()
+        if not image_data:
+            raise ValueError("Attached image is empty.")
+
+        if len(image_data) > self.MAX_INPUT_IMAGE_SIZE_BYTES:
+            max_mb = self.MAX_INPUT_IMAGE_SIZE_BYTES // (1024 * 1024)
+            raise ValueError(f"Image is too large. Maximum allowed size is {max_mb} MB.")
+
+        if not self._is_png_magic(image_data):
+            raise ValueError("Only PNG images are supported (magic bytes check failed).")
+
+        if declared_mime and declared_mime != "image/png":
+            raise ValueError("Image MIME type does not match PNG signature.")
+
+        try:
+            sanitized = self._sanitize_input_image(image_data)
+        except UnidentifiedImageError as exc:
+            raise ValueError("Could not decode image payload.") from exc
+
+        if len(sanitized) > self.MAX_INPUT_IMAGE_SIZE_BYTES:
+            max_mb = self.MAX_INPUT_IMAGE_SIZE_BYTES // (1024 * 1024)
+            raise ValueError(f"Processed image exceeds size limit ({max_mb} MB).")
+
+        return sanitized
+
     async def _process_generation(
         self,
         interaction: discord.Interaction,
@@ -1387,6 +1460,7 @@ class ComfyUIBot(commands.Bot):
         settings: Optional[str],
         resolution: Optional[str],
         input_image: Optional[discord.Attachment],
+        controlnet_strength: Optional[float],
         context: GenerationContext,
     ) -> None:
         workflow_name = workflow or self.workflow_manager.get_default_workflow(workflow_type)
@@ -1414,7 +1488,7 @@ class ComfyUIBot(commands.Bot):
                     description=result.message or "Generation was rejected by security policy.",
                     color=ui_embeds.ERROR_COLOR,
                 )
-                await interaction.response.send_message(embed=embed, ephemeral=True)
+                await self._send_interaction_message(interaction, embed=embed, ephemeral=True)
                 self._finalize_generation_context(context, success=False)
                 return
 
@@ -1424,7 +1498,7 @@ class ComfyUIBot(commands.Bot):
                 description=f"Workflow `{workflow_name}` is not available. Use /workflows to list options.",
                 color=ui_embeds.ERROR_COLOR,
             )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await self._send_interaction_message(interaction, embed=embed, ephemeral=True)
             self._finalize_generation_context(context, success=False)
             return
 
@@ -1434,22 +1508,33 @@ class ComfyUIBot(commands.Bot):
                 description=f"Workflow `{workflow_name}` does not support `{workflow_type}`.",
                 color=ui_embeds.ERROR_COLOR,
             )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await self._send_interaction_message(interaction, embed=embed, ephemeral=True)
             self._finalize_generation_context(context, success=False)
             return
 
         image_data: Optional[bytes] = None
         if workflow_type in ["img2img", "upscale"]:
-            if not input_image or not input_image.filename.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+            if not input_image:
                 embed = ui_embeds.build_notice_embed(
                     title="❌ Invalid image",
-                    description="Provide a valid PNG/JPG/JPEG/WEBP image for this workflow.",
+                    description="Attach an image for this workflow.",
                     color=ui_embeds.ERROR_COLOR,
                 )
-                await interaction.response.send_message(embed=embed, ephemeral=True)
+                await self._send_interaction_message(interaction, embed=embed, ephemeral=True)
                 self._finalize_generation_context(context, success=False)
                 return
-            image_data = await input_image.read()
+
+            try:
+                image_data = await self._validate_and_sanitize_attachment_image(input_image)
+            except ValueError as exc:
+                embed = ui_embeds.build_notice_embed(
+                    title="❌ Invalid image",
+                    description=str(exc),
+                    color=ui_embeds.ERROR_COLOR,
+                )
+                await self._send_interaction_message(interaction, embed=embed, ephemeral=True)
+                self._finalize_generation_context(context, success=False)
+                return
 
         queue_position = self.generation_queue.get_queue_position()
         total_queue = self.generation_queue.size() + 1
@@ -1466,8 +1551,12 @@ class ComfyUIBot(commands.Bot):
                 ("👥 In queue", str(total_queue), True),
             ],
         )
-        await interaction.response.send_message(embed=embed, view=context.view)
-        context.message = await interaction.original_response()
+        context.message = await self._send_interaction_message(
+            interaction,
+            embed=embed,
+            view=context.view,
+            wait=True,
+        )
 
         await self.generation_queue.add_to_queue(
             self._run_generation_pipeline,
@@ -1479,6 +1568,7 @@ class ComfyUIBot(commands.Bot):
             context.resolution,
             image_data,
             context.seed,
+            controlnet_strength,
             priority=context.tier.queue_priority,
         )
     async def _run_generation_pipeline(
@@ -1491,6 +1581,7 @@ class ComfyUIBot(commands.Bot):
         resolution: Optional[str],
         image_data: Optional[bytes],
         seed: Optional[int],
+        controlnet_strength: Optional[float],
     ) -> None:
         start_ts = time.time()
         context.workflow_name = workflow_name
@@ -1514,6 +1605,7 @@ class ComfyUIBot(commands.Bot):
                 context.resolution,
                 image_data,
                 seed=context.seed,
+                controlnet_strength=controlnet_strength,
             )
 
             if context.cancel_event.is_set():
@@ -1842,6 +1934,41 @@ class ComfyUIBot(commands.Bot):
             except Exception as exc:  # pragma: no cover - defensive
                 logger.debug("SYNC active rollback skipped: %s", exc)
 
+    async def _send_interaction_message(
+        self,
+        interaction: discord.Interaction,
+        *,
+        embed: Optional[discord.Embed] = None,
+        content: Optional[str] = None,
+        ephemeral: bool = False,
+        view: Optional[discord.ui.View] = None,
+        wait: bool = False,
+    ) -> Optional[discord.Message]:
+        """Safely send interaction response, falling back to followup when already acknowledged."""
+
+        try:
+            if interaction.response.is_done():
+                return await interaction.followup.send(
+                    content=content,
+                    embed=embed,
+                    ephemeral=ephemeral,
+                    view=view,
+                    wait=wait,
+                )
+
+            await interaction.response.send_message(
+                content=content,
+                embed=embed,
+                ephemeral=ephemeral,
+                view=view,
+            )
+            if wait:
+                return await interaction.original_response()
+            return None
+        except discord.NotFound:
+            logger.warning("interaction expired before response could be sent")
+            return None
+
     async def _send_blocked_message(self, interaction: discord.Interaction) -> None:
         embed = ui_embeds.build_notice_embed(
             title="🚫 Access restricted",
@@ -1888,7 +2015,7 @@ class ComfyUIBot(commands.Bot):
             description=f"```{error[:1000]}```",
             color=ui_embeds.ERROR_COLOR,
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await self._send_interaction_message(interaction, embed=embed, ephemeral=True)
 
     async def _is_member_of_access_guild(self, interaction: discord.Interaction) -> bool:
         try:
@@ -1901,6 +2028,25 @@ class ComfyUIBot(commands.Bot):
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("access-guild: failed %s", exc)
             return False
+
+    async def _has_img2img_access_role(self, interaction: discord.Interaction) -> bool:
+        member = await self._get_access_member(interaction)
+        if not member:
+            return False
+
+        role_ids = {role.id for role in getattr(member, "roles", [])}
+        return bool(role_ids.intersection(self.IMG2IMG_ALLOWED_ROLE_IDS))
+
+    async def _send_img2img_role_required_message(self, interaction: discord.Interaction) -> None:
+        embed = ui_embeds.build_notice_embed(
+            title="🔒 IMG2IMG restricted",
+            description=(
+                "IMG2IMG is available only for Level 3 / Level 4 roles.\n"
+                "Required role IDs: `1451768900453925030`, `1451769149045997588`."
+            ),
+            color=ui_embeds.ERROR_COLOR,
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     async def _send_access_guild_required_message(self, interaction: discord.Interaction) -> None:
         embed = ui_embeds.build_notice_embed(

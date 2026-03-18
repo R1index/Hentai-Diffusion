@@ -1,0 +1,638 @@
+{
+  "164": {
+    "inputs": {
+      "filename_prefix": "Video/2026-03-18/210941LASTFRAME",
+      "images": [
+        "166",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "165": {
+    "inputs": {
+      "method": "mkl",
+      "strength": 0.4000000000000001,
+      "multithread": true,
+      "image_ref": [
+        "291",
+        0
+      ],
+      "image_target": [
+        "167",
+        0
+      ]
+    },
+    "class_type": "ColorMatch",
+    "_meta": {
+      "title": "Color Match"
+    }
+  },
+  "166": {
+    "inputs": {
+      "upscale_method": "lanczos",
+      "scale_by": 2.0000000000000004,
+      "image": [
+        "165",
+        0
+      ]
+    },
+    "class_type": "ImageScaleBy",
+    "_meta": {
+      "title": "Upscale Image By"
+    }
+  },
+  "167": {
+    "inputs": {
+      "from_direction": "end",
+      "count": 1,
+      "image": [
+        "171",
+        0
+      ]
+    },
+    "class_type": "Pick From Batch (mtb)",
+    "_meta": {
+      "title": "Pick From Batch (mtb)"
+    }
+  },
+  "168": {
+    "inputs": {
+      "shift": 6,
+      "model": [
+        "201",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingSD3",
+    "_meta": {
+      "title": "ModelSamplingSD3"
+    }
+  },
+  "169": {
+    "inputs": {
+      "shift": 6,
+      "model": [
+        "200",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingSD3",
+    "_meta": {
+      "title": "ModelSamplingSD3"
+    }
+  },
+  "171": {
+    "inputs": {
+      "samples": [
+        "179",
+        0
+      ],
+      "vae": [
+        "191",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "172": {
+    "inputs": {
+      "width": [
+        "182",
+        1
+      ],
+      "height": [
+        "182",
+        2
+      ],
+      "length": [
+        "174",
+        0
+      ],
+      "batch_size": 1,
+      "positive": [
+        "176",
+        0
+      ],
+      "negative": [
+        "195",
+        0
+      ],
+      "vae": [
+        "191",
+        0
+      ],
+      "clip_vision_output": [
+        "189",
+        0
+      ],
+      "start_image": [
+        "182",
+        0
+      ]
+    },
+    "class_type": "WanImageToVideo",
+    "_meta": {
+      "title": "WanImageToVideo"
+    }
+  },
+  "174": {
+    "inputs": {
+      "_float": [
+        "232",
+        0
+      ]
+    },
+    "class_type": "CR Float To Integer",
+    "_meta": {
+      "title": "🔧 CR Float To Integer"
+    }
+  },
+  "176": {
+    "inputs": {
+      "text": [
+        "177",
+        0
+      ],
+      "clip": [
+        "192",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Positive encode"
+    }
+  },
+  "177": {
+    "inputs": {
+      "string_a": [
+        "233:240",
+        0
+      ],
+      "string_b": "",
+      "delimiter": ""
+    },
+    "class_type": "StringConcatenate",
+    "_meta": {
+      "title": "Concatenate"
+    }
+  },
+  "178": {
+    "inputs": {
+      "value": 6
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "Duration (Seconds)"
+    }
+  },
+  "179": {
+    "inputs": {
+      "anything": [
+        "237:231",
+        0
+      ]
+    },
+    "class_type": "easy cleanGpuUsed",
+    "_meta": {
+      "title": "Clean VRAM Used"
+    }
+  },
+  "181": {
+    "inputs": {
+      "upscale_method": "lanczos",
+      "scale_by": 2.0000000000000004,
+      "image": [
+        "171",
+        0
+      ]
+    },
+    "class_type": "ImageScaleBy",
+    "_meta": {
+      "title": "Upscale Image By"
+    }
+  },
+  "182": {
+    "inputs": {
+      "width": [
+        "208",
+        0
+      ],
+      "height": [
+        "208",
+        1
+      ],
+      "upscale_method": "lanczos",
+      "keep_proportion": "stretch",
+      "pad_color": "0, 0, 0",
+      "crop_position": "center",
+      "divisible_by": 16,
+      "device": "cpu",
+      "image": [
+        "291",
+        0
+      ]
+    },
+    "class_type": "ImageResizeKJv2",
+    "_meta": {
+      "title": "Resize Image v2"
+    }
+  },
+  "186": {
+    "inputs": {
+      "unet_name": "smoothMixWan2214BI2V_i2vV20Low.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model - LOW"
+    }
+  },
+  "189": {
+    "inputs": {
+      "crop": "none",
+      "clip_vision": [
+        "190",
+        0
+      ],
+      "image": [
+        "291",
+        0
+      ]
+    },
+    "class_type": "CLIPVisionEncode",
+    "_meta": {
+      "title": "CLIP Vision Encode"
+    }
+  },
+  "190": {
+    "inputs": {
+      "clip_name": "clip_vision_h.safetensors"
+    },
+    "class_type": "CLIPVisionLoader",
+    "_meta": {
+      "title": "Load CLIP Vision"
+    }
+  },
+  "191": {
+    "inputs": {
+      "vae_name": "wan_2.1_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "192": {
+    "inputs": {
+      "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "type": "wan",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "195": {
+    "inputs": {
+      "text": "噪点过多、色彩鲜艳、过曝、静态、细节模糊、字幕、风格、艺术作品、绘画、图像、静止图像、整体灰暗、质量极差、低质量、JPEG压缩残留、丑陋、不完整、多余手指、手部绘制粗糙、面部绘制粗糙、变形、毁容、肢体变形、手指粘连、静态图像、杂乱背景、三条腿、背景中人多、倒退行走、肤色不自然、眼睑变色、眼睑发红、上眼睑发红、红色眼影、浓密睫毛、已审查、马赛克审查、条形审查、像素化",
+      "clip": [
+        "192",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Negative"
+    }
+  },
+  "197": {
+    "inputs": {
+      "unet_name": "smoothMixWan2214BI2V_i2vV20High.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model - HIGH"
+    }
+  },
+  "198": {
+    "inputs": {
+      "frame_rate": 32,
+      "loop_count": 0,
+      "filename_prefix": "Video/2026-03-18/210941",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "trim_to_audio": false,
+      "pingpong": false,
+      "save_output": true,
+      "images": [
+        "212",
+        0
+      ]
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "Video Combine 🎥🅥🅗🅢"
+    }
+  },
+  "199": {
+    "inputs": {
+      "anything": [
+        "181",
+        0
+      ]
+    },
+    "class_type": "easy cleanGpuUsed",
+    "_meta": {
+      "title": "Clean VRAM Used"
+    }
+  },
+  "200": {
+    "inputs": {
+      "PowerLoraLoaderHeaderWidget": {
+        "type": "PowerLoraLoaderHeaderWidget"
+      },
+      "lora_1": {
+        "on": true,
+        "lora": "NSFW-22-L-e8.safetensors",
+        "strength": 0.9
+      },
+      "lora_2": {
+        "on": true,
+        "lora": "lightx2v_I2V_14B_480p_cfg_step_distill_rank128_bf16.safetensors",
+        "strength": 1.5
+      },
+      "➕ Add Lora": "",
+      "model": [
+        "186",
+        0
+      ]
+    },
+    "class_type": "Power Lora Loader (rgthree)",
+    "_meta": {
+      "title": "Power Lora Loader (rgthree)"
+    }
+  },
+  "201": {
+    "inputs": {
+      "PowerLoraLoaderHeaderWidget": {
+        "type": "PowerLoraLoaderHeaderWidget"
+      },
+      "lora_1": {
+        "on": true,
+        "lora": "NSFW-22-H-e8.safetensors",
+        "strength": 0.9
+      },
+      "lora_2": {
+        "on": true,
+        "lora": "lightx2v_I2V_14B_480p_cfg_step_distill_rank128_bf16.safetensors",
+        "strength": 3
+      },
+      "➕ Add Lora": "",
+      "model": [
+        "197",
+        0
+      ]
+    },
+    "class_type": "Power Lora Loader (rgthree)",
+    "_meta": {
+      "title": "Power Lora Loader (rgthree)"
+    }
+  },
+  "208": {
+    "inputs": {
+      "Xi": [
+        "289",
+        0
+      ],
+      "Xf": 1952,
+      "Yi": [
+        "290",
+        0
+      ],
+      "Yf": 1952,
+      "isfloatX": 0,
+      "isfloatY": 0
+    },
+    "class_type": "mxSlider2D",
+    "_meta": {
+      "title": "VIDEO Width x Height"
+    }
+  },
+  "210": {
+    "inputs": {
+      "seed": 149596027805551
+    },
+    "class_type": "Seed (rgthree)",
+    "_meta": {
+      "title": "Seed (rgthree)"
+    }
+  },
+  "212": {
+    "inputs": {
+      "source_fps": 16,
+      "target_fps": 32,
+      "scale": 1,
+      "model_name": "flownet.pkl",
+      "batch_size": 8,
+      "use_fp16": true,
+      "images": [
+        "199",
+        0
+      ]
+    },
+    "class_type": "RIFEInterpolation",
+    "_meta": {
+      "title": "RIFE Frame Interpolation"
+    }
+  },
+  "232": {
+    "inputs": {
+      "expression": "a*16+1",
+      "values.a": [
+        "178",
+        0
+      ]
+    },
+    "class_type": "ComfyMathExpression",
+    "_meta": {
+      "title": "Math Expression"
+    }
+  },
+  "283": {
+    "inputs": {
+      "images": [
+        "166",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Last Frame Preview"
+    }
+  },
+  "288": {
+    "inputs": {
+      "image": [
+        "291",
+        0
+      ]
+    },
+    "class_type": "GetImageSize",
+    "_meta": {
+      "title": "Get Image Size"
+    }
+  },
+  "289": {
+    "inputs": {
+      "a": [
+        "288",
+        0
+      ],
+      "b": 4,
+      "operation": "divide"
+    },
+    "class_type": "easy mathInt",
+    "_meta": {
+      "title": "Math Int"
+    }
+  },
+  "290": {
+    "inputs": {
+      "a": [
+        "288",
+        1
+      ],
+      "b": 4,
+      "operation": "divide"
+    },
+    "class_type": "easy mathInt",
+    "_meta": {
+      "title": "Math Int"
+    }
+  },
+  "291": {
+    "inputs": {
+      "image": "",
+      "custom_width": 0,
+      "custom_height": 0
+    },
+    "class_type": "VHS_LoadImagePath",
+    "_meta": {
+      "title": "Load Image (Path) 🎥🅥🅗🅢"
+    }
+  },
+  "233:240": {
+    "inputs": {
+      "prompt": "",
+      "seed": 382311677675095
+    },
+    "class_type": "PromptGenerator",
+    "_meta": {
+      "title": "Prompt Generator 💡"
+    }
+  },
+  "233:239": {
+    "inputs": {
+      "preview_markdown": "1girl, 1dog, bestiality, doggystyle, anime coloring, white background, grabbing from behind, sex from behind, looking at viewer, bouncing breasts, bouncing ass, plait, dog, ",
+      "preview_text": "1girl, 1dog, bestiality, doggystyle, anime coloring, white background, grabbing from behind, sex from behind, looking at viewer, bouncing breasts, bouncing ass, plait, dog, ",
+      "previewMode": null,
+      "source": [
+        "233:240",
+        0
+      ]
+    },
+    "class_type": "PreviewAny",
+    "_meta": {
+      "title": "Preview as Text"
+    }
+  },
+  "236:206": {
+    "inputs": {
+      "add_noise": "enable",
+      "noise_seed": [
+        "210",
+        0
+      ],
+      "steps": 10,
+      "cfg": 1,
+      "sampler_name": "euler_ancestral",
+      "scheduler": "normal",
+      "start_at_step": 0,
+      "end_at_step": 5,
+      "return_with_leftover_noise": "enable",
+      "model": [
+        "168",
+        0
+      ],
+      "positive": [
+        "172",
+        0
+      ],
+      "negative": [
+        "172",
+        1
+      ],
+      "latent_image": [
+        "172",
+        2
+      ]
+    },
+    "class_type": "KSamplerAdvanced",
+    "_meta": {
+      "title": "KSampler (Advanced)"
+    }
+  },
+  "237:231": {
+    "inputs": {
+      "add_noise": "disable",
+      "noise_seed": 0,
+      "steps": 10,
+      "cfg": 1,
+      "nag_scale": 30,
+      "nag_tau": 2.5,
+      "nag_alpha": 0.25,
+      "nag_sigma_end": 1,
+      "sampler_name": "euler_ancestral",
+      "scheduler": "normal",
+      "start_at_step": 5,
+      "end_at_step": 10000,
+      "return_with_leftover_noise": "disable",
+      "model": [
+        "169",
+        0
+      ],
+      "positive": [
+        "172",
+        0
+      ],
+      "negative": [
+        "172",
+        1
+      ],
+      "nag_negative": [
+        "172",
+        1
+      ],
+      "latent_image": [
+        "236:206",
+        0
+      ]
+    },
+    "class_type": "KSamplerWithNAG (Advanced)",
+    "_meta": {
+      "title": "KSamplerWithNAG (Advanced)"
+    }
+  }
+}
