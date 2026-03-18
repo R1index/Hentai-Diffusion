@@ -1607,6 +1607,7 @@ class ComfyUIBot(commands.Bot):
                 seed=context.seed,
                 controlnet_strength=controlnet_strength,
             )
+            video_only_updates = self._workflow_outputs_video(workflow_json)
 
             if context.cancel_event.is_set():
                 await self._handle_cancelled_generation(context)
@@ -1650,6 +1651,7 @@ class ComfyUIBot(commands.Bot):
                 prompt_id,
                 update,
                 cancel_event=context.cancel_event,
+                video_only=video_only_updates,
             )
 
             if context.cancel_event.is_set():
@@ -1688,6 +1690,19 @@ class ComfyUIBot(commands.Bot):
                 except discord.HTTPException:
                     pass
             self._finalize_generation_context(context, success=context.completed)
+
+    @staticmethod
+    def _workflow_outputs_video(workflow_json: dict) -> bool:
+        """Return True when workflow appears to include video output nodes."""
+        video_markers = ("video", "animate", "gif", "vhs_")
+        for node in workflow_json.values():
+            if not isinstance(node, dict):
+                continue
+            class_type = str(node.get("class_type", "")).lower()
+            if any(marker in class_type for marker in video_markers):
+                return True
+        return False
+
     def _create_generation_view(self, context: GenerationContext) -> GenerationView:
         async def on_cancel(interaction: discord.Interaction) -> None:
             await self._handle_cancel_request(context, interaction)
