@@ -438,6 +438,14 @@ workflows:
                           inp[f"lora_{i:02d}"] = "None"
                           inp[f"strength_{i:02d}"] = 0.0
 
+  IMG2VID:
+    type: img2img
+    description: Workflow image-to-video based on attached input image.
+    workflow: ./workflows/IMG2VID.json
+    text_prompt_node_id: "233:240"
+    image_input_node_id: 291
+    seed_node_id: 210
+
 security:
   access_guild_id: 1305851922644992080
   supporter_role_id: 1361296590777745560
