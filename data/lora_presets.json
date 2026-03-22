@@ -1,0 +1,366 @@
+[
+  {
+    "name": "Aglaea (Honkai: Star Rail)",
+    "lora": "aglaea"
+  },
+  {
+    "name": "Aino (Genshin Impact) v1",
+    "lora": "aino1"
+  },
+  {
+    "name": "Aino (Genshin Impact) v2",
+    "lora": "aino2"
+  },
+  {
+    "name": "Alice & Yuzuha (+skin) (Zenless Zone Zero)",
+    "lora": "aliyuz"
+  },
+  {
+    "name": "Liter (Nikke: Goddes of Victory)",
+    "lora": "liter"
+  },
+  {
+    "name": "Pulchra (Zenless Zone Zero)",
+    "lora": "pulchra"
+  },
+  {
+    "name": "Burnice (Zenless Zone Zero)",
+    "lora": "burnice"
+  },
+  {
+    "name": "Filian VTuber (Philippine femboy)",
+    "lora": "filian"
+  },
+  {
+    "name": "Nylonium (original character)",
+    "lora": "nylonium"
+  },
+  {
+    "name": "Ayato Haruno (netosis)",
+    "lora": "ayatoharuno"
+  },
+  {
+    "name": "Tadano Hhitohito (Komi-san wa Comyushou desu)",
+    "lora": "tadanohitohito"
+  },
+  {
+    "name": "Phoebe (Wuthering Waves)",
+    "lora": "phoebe"
+  },
+  {
+    "name": "Zani (Wuthering Waves)",
+    "lora": "zani"
+  },
+  {
+    "name": "Vivian (Zenless Zone Zero)",
+    "lora": "vivian"
+  },
+  {
+    "name": "Yi Xuan (Zenless Zone Zero)",
+    "lora": "yixuan"
+  },
+  {
+    "name": "Cartethyia & Fleurdelys (Wuthering Waves)",
+    "lora": "cartethyia"
+  },
+  {
+    "name": "Added 3d style artist custom_udon",
+    "lora": "customudon"
+  },
+  {
+    "name": "Nekomiya Mana (Zenless Zone Zero)",
+    "lora": "nekomiya"
+  },
+  {
+    "name": "Ju Fufu (Zenless Zone Zero)",
+    "lora": "jufufu"
+  },
+  {
+    "name": "Roccia (Wuthering Waves)",
+    "lora": "roccia"
+  },
+  {
+    "name": "Encore (Wuthering Waves)",
+    "lora": "encore"
+  },
+  {
+    "name": "Verina (Wuthering Waves)",
+    "lora": "verina"
+  },
+  {
+    "name": "Kachina (Genshin Impact)",
+    "lora": "kachina"
+  },
+  {
+    "name": "Iansan (Genshin Impact)",
+    "lora": "iansan"
+  },
+  {
+    "name": "Piper (Zenless Zone Zero)",
+    "lora": "piper"
+  },
+  {
+    "name": "Lucy (Zenless Zone Zero)",
+    "lora": "lucy"
+  },
+  {
+    "name": "Qingyi (Zenless Zone Zero)",
+    "lora": "qingyi"
+  },
+  {
+    "name": "Trigger (Zenless Zone Zero)",
+    "lora": "trigger"
+  },
+  {
+    "name": "Yunli (Honkai: Star Rail)",
+    "lora": "yunli"
+  },
+  {
+    "name": "Varesa (Genshin Impact)",
+    "lora": "varesa"
+  },
+  {
+    "name": "Carlotta (Wuthering Waves)",
+    "lora": "carlotta"
+  },
+  {
+    "name": "All character lora (Zenless Zone Zero)",
+    "lora": "zzz"
+  },
+  {
+    "name": "Tribbie (Honkai: Star Rail)",
+    "lora": "tribios"
+  },
+  {
+    "name": "Sameko Saba (VTuber). New Gawr Gura avatar.",
+    "lora": "samekosaba"
+  },
+  {
+    "name": "Sameko Saba (VTuber). New Gawr Gura avatar. v2",
+    "lora": "samekosaba2"
+  },
+  {
+    "name": "Lupa (Wuthering Waves)",
+    "lora": "lupa"
+  },
+  {
+    "name": "Seia (swimsuit) (Blue Archive)",
+    "lora": "seiaswim"
+  },
+  {
+    "name": "Belle and Wise (all Skins) (Zenless Zone Zero)",
+    "lora": "bellewise"
+  },
+  {
+    "name": "Mint Fantome (Vtuber)",
+    "lora": "mint"
+  },
+  {
+    "name": "concept kankakushadan (Tentacle pit trap)",
+    "lora": "tentpit2"
+  },
+  {
+    "name": "Nimi Nightmare (Vtuber)",
+    "lora": "nimi"
+  },
+  {
+    "name": "VRchat style (3D)",
+    "lora": "vrchat"
+  },
+  {
+    "name": "Eiselin Hulkenberg (Metaphor: ReFantazio)",
+    "lora": "hulkenberg"
+  },
+  {
+    "name": "Brigitta Lycaon (Metaphor: ReFantazio)",
+    "lora": "brigitta"
+  },
+  {
+    "name": "Dokibird (VTuber)",
+    "lora": "dokibird"
+  },
+  {
+    "name": "Nomasa Rei (Blue Archive)",
+    "lora": "rei"
+  },
+  {
+    "name": "Castorice (Honkai: Star Reil)",
+    "lora": "castorice"
+  },
+  {
+    "name": "Yidhari (Zenless Zone Zero) v1",
+    "lora": "yidhari1"
+  },
+  {
+    "name": "Yidhari (Zenless Zone Zero) v2",
+    "lora": "yidhari2"
+  },
+  {
+    "name": "Yidhari (Zenless Zone Zero) v3",
+    "lora": "yidhari3"
+  },
+  {
+    "name": "Zhezhi (Wuthering Waves) v1",
+    "lora": "zhezhi1"
+  },
+  {
+    "name": "Zhezhi (Wuthering Waves) v2",
+    "lora": "zhezhi2"
+  },
+  {
+    "name": "roachsex (insect)",
+    "lora": "roachsex"
+  },
+  {
+    "name": "flysex (insect)",
+    "lora": "flysex"
+  },
+  {
+    "name": "maggot (insect)",
+    "lora": "maggot"
+  },
+  {
+    "name": "spidersex (insect)",
+    "lora": "spidersex"
+  },
+  {
+    "name": "waspsex (insect)",
+    "lora": "waspsex"
+  },
+  {
+    "name": "terminidsex (insect)",
+    "lora": "terminidsex"
+  },
+  {
+    "name": "slugsex (monster)",
+    "lora": "slugsex"
+  },
+  {
+    "name": "asshugger (monster)",
+    "lora": "asshugger"
+  },
+  {
+    "name": "pussyburster (monster)",
+    "lora": "pussyburster"
+  },
+  {
+    "name": "tentparasite (parasite)",
+    "lora": "tentparasite"
+  },
+  {
+    "name": "leucochloridium (parasite)",
+    "lora": "leucochloridium"
+  },
+  {
+    "name": "oviposition x-ray",
+    "lora": "ovipositionxray"
+  },
+  {
+    "name": "oviposition",
+    "lora": "oviposition"
+  },
+  {
+    "name": "creatureinside (monster)",
+    "lora": "creatureinside"
+  },
+  {
+    "name": "she venom (parasite)",
+    "lora": "shevenom"
+  },
+  {
+    "name": "ear fuck concept",
+    "lora": "earfuck"
+  },
+  {
+    "name": "licker (monster)",
+    "lora": "licker"
+  },
+  {
+    "name": "likelike (monster)",
+    "lora": "likelike"
+  },
+  {
+    "name": "Сantarella (Wuthering Waves) v1",
+    "lora": "cantarella1"
+  },
+  {
+    "name": "Сantarella (Wuthering Waves) v2",
+    "lora": "cantarella2"
+  },
+  {
+    "name": "Hakuhou (Azure Lane)",
+    "lora": "hakuhou"
+  },
+  {
+    "name": "Augusta (Wuthering Waves) v1",
+    "lora": "augusta1"
+  },
+  {
+    "name": "Augusta (Wuthering Waves) v2",
+    "lora": "augusta2"
+  },
+  {
+    "name": "Lenna (ump9) (Girls' frontline 2)",
+    "lora": "ump9gf2"
+  },
+  {
+    "name": "Leva (ump45) (Girls' frontline 2)",
+    "lora": "ump45gf2"
+  },
+  {
+    "name": "Cipher (Honkai: Star Rail)",
+    "lora": "cipher"
+  },
+  {
+    "name": "Lingsha (Honkai: Star Rail)",
+    "lora": "lingsha"
+  },
+  {
+    "name": "Hachi (only new outfit) Live Union Vtuber",
+    "lora": "hachi"
+  },
+  {
+    "name": "Galbrena (Wuthering Waves)",
+    "lora": "galbrena"
+  },
+  {
+    "name": "Lynae (Wuthering Waves)",
+    "lora": "lynae"
+  },
+  {
+    "name": "Galbrena (Wuthering Waves) v2",
+    "lora": "galbrena2"
+  },
+  {
+    "name": "Lynae (Wuthering Waves) v2",
+    "lora": "lynae2"
+  },
+  {
+    "name": "Iuno (Wuthering Waves)",
+    "lora": "iuno"
+  },
+  {
+    "name": "Yvonne (Arknights: Endfield)",
+    "lora": "yvonne"
+  },
+  {
+    "name": "Fluorite (Arknights: Endfield)",
+    "lora": "fluorite"
+  },
+  {
+    "name": "Seed (Zenless Zone Zero)",
+    "lora": "seed"
+  },
+  {
+    "name": "Zhao (Zenless Zone Zero)",
+    "lora": "zhao"
+  },
+  {
+    "name": "Hotate Style",
+    "lora": "hotate"
+  },
+    {
+    "name": "Carrot Caramel Batake Style",
+    "lora": "Carrot Caramel Batake Style 2.0"
+  }
+]

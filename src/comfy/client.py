@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import aiohttp
 import discord
@@ -342,11 +342,36 @@ class ComfyUIClient:
         percentage = int(100 * (value / max_value))
         return f"[{bar}] {percentage}%"
 
+    @staticmethod
+    def _is_video_filename(filename: str) -> bool:
+        return filename.lower().endswith((".mp4", ".webm", ".mov", ".mkv", ".avi", ".gif"))
+
+    def _extract_output_media(self, node_output: dict) -> Tuple[List[dict], List[dict]]:
+        """Split node outputs into video and image items."""
+        video_items: List[dict] = []
+        image_items: List[dict] = []
+
+        for key in ("videos", "gifs"):
+            for media in node_output.get(key, []):
+                if isinstance(media, dict) and media.get("filename"):
+                    video_items.append(media)
+
+        for media in node_output.get("images", []):
+            if not isinstance(media, dict) or "filename" not in media:
+                continue
+            if self._is_video_filename(media["filename"]):
+                video_items.append(media)
+            else:
+                image_items.append(media)
+
+        return video_items, image_items
+
     async def listen_for_updates(
         self,
         prompt_id: str,
         message_callback,
         cancel_event: Optional[asyncio.Event] = None,
+        video_only: bool = False,
     ):
         """Listen for updates about a specific generation."""
 
@@ -360,6 +385,8 @@ class ComfyUIClient:
 
         async def emit(status: str, image_file: Optional[discord.File] = None) -> None:
             await message_callback(status, image_file)
+
+        sent_video = False
 
         try:
             while True:
@@ -437,10 +464,33 @@ class ComfyUIClient:
                     if not isinstance(node_output, dict):
                         continue
 
-                    for image_data in node_output.get('images', []):
-                        if not isinstance(image_data, dict) or 'filename' not in image_data:
+                    video_outputs, image_outputs = self._extract_output_media(node_output)
+
+                    for video_data in video_outputs:
+                        video_url = self._get_image_url(instance, video_data)
+                        if not video_url:
                             continue
 
+                        async with session.get(video_url) as response:
+                            if response.status != 200:
+                                continue
+
+                            video_bytes = await response.read()
+                            video_file = discord.File(
+                                io.BytesIO(video_bytes),
+                                filename=video_data.get('filename', 'output.mp4'),
+                            )
+                            elapsed_time = time.time() - start_time
+                            await emit(
+                                f"🎬 New video generated!\n⏱ Time elapsed: {elapsed_time:.2f} seconds",
+                                video_file,
+                            )
+                            sent_video = True
+
+                    if video_only and sent_video:
+                        continue
+
+                    for image_data in image_outputs:
                         image_url = self._get_image_url(instance, image_data)
                         if not image_url:
                             continue

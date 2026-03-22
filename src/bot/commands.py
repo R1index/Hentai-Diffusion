@@ -1,7 +1,30 @@
-from typing import Optional
+from typing import Callable, Optional
 
 import discord
 from discord import app_commands
+
+
+def _make_preset_autocomplete(
+        search_func: Callable[[str, int], list]
+) -> Callable[[discord.Interaction, str], list[app_commands.Choice[str]]]:
+    async def _autocomplete(
+            interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        presets = search_func(current, limit=25)
+        return [
+            app_commands.Choice(name=preset.name, value=preset.value)
+            for preset in presets
+        ]
+
+    return _autocomplete
+
+
+def _preset_autocompletes(bot):
+    return (
+        _make_preset_autocomplete(bot.workflow_manager.search_prompt_presets),
+        _make_preset_autocomplete(bot.workflow_manager.search_model_presets),
+        _make_preset_autocomplete(bot.workflow_manager.search_lora_presets),
+    )
 
 
 def rgen_command(bot):
@@ -12,12 +35,18 @@ def rgen_command(bot):
         for label, value in bot.workflow_manager.get_resolution_presets()[:25]
     ]
 
+    prompt_autocomplete, model_autocomplete, lora_autocomplete = _preset_autocompletes(bot)
+
     @app_commands.command(
         name="rgen",
         description="Forge an image using text-to-image"
     )
     @app_commands.describe(
         prompt="Description of the image you want to create",
+        prompt_preset="Select a prompt preset (optional)",
+        model_preset="Select a model preset (optional)",
+        lora_preset="Select a LoRA preset (optional)",
+        seed="Seed value (optional)",
         resolution="Select the output resolution (optional)",
         workflow="The workflow to use (optional)",
         settings="Additional settings (optional)"
@@ -25,6 +54,10 @@ def rgen_command(bot):
     async def rgen(
             interaction: discord.Interaction,
             prompt: str,
+            prompt_preset: Optional[str] = None,
+            model_preset: Optional[str] = None,
+            lora_preset: Optional[str] = None,
+            seed: Optional[int] = None,
             resolution: Optional[app_commands.Choice[str]] = None,
             workflow: Optional[str] = None,
             settings: Optional[str] = None
@@ -37,16 +70,28 @@ def rgen_command(bot):
             workflow,
             settings,
             resolution=selected_resolution,
+            prompt_preset=prompt_preset,
+            model_preset=model_preset,
+            lora_preset=lora_preset,
+            seed=seed,
         )
 
     if resolution_choices:
         rgen = app_commands.choices(resolution=resolution_choices)(rgen)
+    rgen = app_commands.autocomplete(prompt_preset=prompt_autocomplete)(rgen)
+    rgen = app_commands.autocomplete(model_preset=model_autocomplete)(rgen)
+    rgen = app_commands.autocomplete(lora_preset=lora_autocomplete)(rgen)
 
     return rgen
 
 
 def reforge_command(bot):
     """Create the reforge command for img2img generation"""
+
+    resolution_choices = [
+        app_commands.Choice(name=label, value=value)
+        for label, value in bot.workflow_manager.get_resolution_presets()[:25]
+    ]
 
     @app_commands.command(
         name="reforge",
@@ -55,6 +100,12 @@ def reforge_command(bot):
     @app_commands.describe(
         image="The image to reforge",
         prompt="Description of the changes you want to make",
+        prompt_preset="Select a prompt preset (optional)",
+        model_preset="Select a model preset (optional)",
+        lora_preset="Select a LoRA preset (optional)",
+        seed="Seed value (optional)",
+        resolution="Select the output resolution (optional)",
+        controlnet_strength="ControlNet strength (optional, for workflows that support it)",
         workflow="The workflow to use (optional)",
         settings="Additional settings (optional)"
     )
@@ -62,19 +113,100 @@ def reforge_command(bot):
             interaction: discord.Interaction,
             image: discord.Attachment,
             prompt: str,
+            prompt_preset: Optional[str] = None,
+            model_preset: Optional[str] = None,
+            lora_preset: Optional[str] = None,
+            seed: Optional[int] = None,
+            resolution: Optional[app_commands.Choice[str]] = None,
+            controlnet_strength: Optional[float] = None,
             workflow: Optional[str] = None,
-            settings: Optional[str] = None
+        settings: Optional[str] = None
     ):
+        selected_resolution = resolution.value if resolution else None
         await bot.handle_generation(
             interaction,
             'img2img',
             prompt,
             workflow,
             settings,
+            resolution=selected_resolution,
+            controlnet_strength=controlnet_strength,
+            prompt_preset=prompt_preset,
+            model_preset=model_preset,
+            lora_preset=lora_preset,
+            seed=seed,
             input_image=image,
         )
 
-    return reforge
+    if resolution_choices:
+        reforge = app_commands.choices(resolution=resolution_choices)(reforge)
+
+    prompt_autocomplete, model_autocomplete, lora_autocomplete = _preset_autocompletes(bot)
+    reforge = app_commands.autocomplete(prompt_preset=prompt_autocomplete)(reforge)
+    reforge = app_commands.autocomplete(model_preset=model_autocomplete)(reforge)
+    return app_commands.autocomplete(lora_preset=lora_autocomplete)(reforge)
+
+
+def img2img_command(bot):
+    """Create the img2img command for image-to-image generation"""
+
+    resolution_choices = [
+        app_commands.Choice(name=label, value=value)
+        for label, value in bot.workflow_manager.get_resolution_presets()[:25]
+    ]
+
+    @app_commands.command(
+        name="img2img",
+        description="Generate an image from an attached source image"
+    )
+    @app_commands.describe(
+        image="Source image",
+        prompt="Description of the changes you want to make",
+        prompt_preset="Select a prompt preset (optional)",
+        model_preset="Select a model preset (optional)",
+        lora_preset="Select a LoRA preset (optional)",
+        seed="Seed value (optional)",
+        resolution="Select the output resolution (optional)",
+        controlnet_strength="ControlNet strength (optional, for workflows that support it)",
+        workflow="The workflow to use (optional)",
+        settings="Additional settings (optional)"
+    )
+    async def img2img(
+            interaction: discord.Interaction,
+            image: discord.Attachment,
+            prompt: str,
+            prompt_preset: Optional[str] = None,
+            model_preset: Optional[str] = None,
+            lora_preset: Optional[str] = None,
+            seed: Optional[int] = None,
+            resolution: Optional[app_commands.Choice[str]] = None,
+            controlnet_strength: Optional[float] = None,
+            workflow: Optional[str] = None,
+            settings: Optional[str] = None
+    ):
+        selected_resolution = resolution.value if resolution else None
+        await bot.handle_generation(
+            interaction,
+            'img2img',
+            prompt,
+            workflow,
+            settings,
+            resolution=selected_resolution,
+            controlnet_strength=controlnet_strength,
+            prompt_preset=prompt_preset,
+            model_preset=model_preset,
+            lora_preset=lora_preset,
+            seed=seed,
+            input_image=image,
+        )
+
+    if resolution_choices:
+        img2img = app_commands.choices(resolution=resolution_choices)(img2img)
+
+    prompt_autocomplete, model_autocomplete, lora_autocomplete = _preset_autocompletes(bot)
+    img2img = app_commands.autocomplete(prompt_preset=prompt_autocomplete)(img2img)
+    img2img = app_commands.autocomplete(model_preset=model_autocomplete)(img2img)
+    return app_commands.autocomplete(lora_preset=lora_autocomplete)(img2img)
 
 
 def upscale_command(bot):
@@ -87,6 +219,10 @@ def upscale_command(bot):
     @app_commands.describe(
         image="The image to upscale",
         prompt="Description of the changes you want to make",
+        prompt_preset="Select a prompt preset (optional)",
+        model_preset="Select a model preset (optional)",
+        lora_preset="Select a LoRA preset (optional)",
+        seed="Seed value (optional)",
         workflow="The workflow to use (optional)",
         settings="Additional settings (optional)"
     )
@@ -94,8 +230,12 @@ def upscale_command(bot):
             interaction: discord.Interaction,
             image: discord.Attachment,
             prompt: str,
+            prompt_preset: Optional[str] = None,
+            model_preset: Optional[str] = None,
+            lora_preset: Optional[str] = None,
+            seed: Optional[int] = None,
             workflow: Optional[str] = None,
-            settings: Optional[str] = None
+        settings: Optional[str] = None
     ):
         await bot.handle_generation(
             interaction,
@@ -103,10 +243,17 @@ def upscale_command(bot):
             prompt,
             workflow,
             settings,
+            prompt_preset=prompt_preset,
+            model_preset=model_preset,
+            lora_preset=lora_preset,
+            seed=seed,
             input_image=image,
         )
 
-    return upscale
+    prompt_autocomplete, model_autocomplete, lora_autocomplete = _preset_autocompletes(bot)
+    upscale = app_commands.autocomplete(prompt_preset=prompt_autocomplete)(upscale)
+    upscale = app_commands.autocomplete(model_preset=model_autocomplete)(upscale)
+    return app_commands.autocomplete(lora_preset=lora_autocomplete)(upscale)
 
 
 def workflows_command(bot):
@@ -183,20 +330,19 @@ def profile_command(bot):
         bot._reset_counts_if_needed()
         stats = bot.get_user_generation_summary(user_id)
 
-        supporter_role = await bot._has_unlimited_access(interaction)
+        tier = await bot._determine_user_tier(interaction)
         listed_donor = user_id in bot.donor_users
-        has_unlimited = supporter_role or listed_donor
+        has_unlimited = tier.daily_limit is None
 
-        status_details = []
-        if listed_donor:
-            status_details.append("listed as donor")
-        if supporter_role:
-            status_details.append("has supporter role")
+        status_details = [f"Tier: **{tier.name}**"]
+        if tier.queue_priority >= 30:
+            status_details.append("Priority queue access")
+        if tier.max_parallel_generations > 1:
+            status_details.append(f"Queue up to {tier.max_parallel_generations} at once")
+        if listed_donor and tier.level < bot.donor_tier.level:
+            status_details.append("Listed as donor")
 
-        if status_details:
-            sponsorship_status = f"💎 Active ({', '.join(status_details)})"
-        else:
-            sponsorship_status = "🪙 Inactive"
+        sponsorship_status = "\n".join(status_details)
 
         embed = discord.Embed(
             title="👤 User Profile",
@@ -217,11 +363,14 @@ def profile_command(bot):
         embed.add_field(name="💖 Sponsorship", value=sponsorship_status, inline=False)
 
         if has_unlimited:
-            limit_value = "Unlimited — thank you for supporting us!"
-            embed.add_field(name="💎 Daily limit", value=limit_value, inline=False)
+            limit_lines = ["Unlimited — thank you for supporting us!"]
+            limit_lines.append(f"Queue slots: **{tier.max_parallel_generations}**")
+            if tier.queue_priority >= 30:
+                limit_lines.append("Priority over lower tiers.")
+            embed.add_field(name="💎 Access", value="\n".join(limit_lines), inline=False)
         else:
             used = int(bot.user_generation_counts.get(user_id, 0))
-            limit = int(bot.DAILY_GENERATION_LIMIT)
+            limit = int(tier.daily_limit or 0)
             remaining = max(0, limit - used)
             reset_hint = bot._format_time_remaining()
             limit_lines = [
