@@ -24,7 +24,14 @@ from discord.ext import commands, tasks
 from PIL import Image, UnidentifiedImageError
 
 from logger import logger
-from .commands import img2img_command, profile_command, reforge_command, rgen_command, workflows_command
+from .commands import (
+    img2img_command,
+    img2vid_command,
+    profile_command,
+    reforge_command,
+    rgen_command,
+    workflows_command,
+)
 from ..comfy.client import ComfyUIClient
 from ..comfy.workflow_manager import WorkflowManager
 from ..core.generation_queue import GenerationQueue
@@ -72,6 +79,7 @@ class GenerationContext:
     tier: RoleTier = field(default_factory=lambda: RoleTier(0, "Public", None, 25, 0, 1))
     daily_limit: Optional[int] = None
     counted_usage: bool = False
+    counted_img2vid_usage: bool = False
     slot_counted: bool = False
     completed: bool = False
     cancelled_notified: bool = False
@@ -87,6 +95,11 @@ class ComfyUIBot(commands.Bot):
     MAX_INPUT_IMAGE_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB
     ALLOWED_IMAGE_MIME_TYPES = {"image/png"}
     IMG2IMG_ALLOWED_ROLE_IDS = {1451768900453925030, 1451769149045997588}
+    IMG2VID_WORKFLOW_NAME = "IMG2VID"
+    IMG2VID_DAILY_LIMITS = {
+        1451768900453925030: 6,
+        1451769149045997588: 30,
+    }
 
     def __init__(self, configuration_path: str = "configuration.yml", plugins_path: str = "plugins"):
         intents = discord.Intents.default()
@@ -186,6 +199,7 @@ class ComfyUIBot(commands.Bot):
             max_parallel_generations=1,
         )
         self.user_generation_counts: Dict[str, int] = defaultdict(int)
+        self.user_img2vid_counts: Dict[str, int] = defaultdict(int)
         self.user_generation_stats: Dict[str, Dict[str, Any]] = {}
         self.last_reset_time: float = time.time()
 
@@ -288,6 +302,7 @@ class ComfyUIBot(commands.Bot):
                 with open(counts_path, "r", encoding="utf-8") as file:
                     data = yaml.safe_load(file) or {}
                     self.user_generation_counts = defaultdict(int, data.get("counts", {}))
+                    self.user_img2vid_counts = defaultdict(int, data.get("img2vid_counts", {}))
                     self.last_reset_time = data.get("last_reset", time.time())
                     stats_mutated = self._load_generation_stats(data.get("stats"))
                     if stats_mutated:
@@ -299,6 +314,7 @@ class ComfyUIBot(commands.Bot):
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("Failed to load generation counts: %s", exc)
             self.user_generation_counts = defaultdict(int)
+            self.user_img2vid_counts = defaultdict(int)
             self.last_reset_time = time.time()
             self._save_generation_counts()
 
@@ -307,6 +323,7 @@ class ComfyUIBot(commands.Bot):
         try:
             data = {
                 "counts": dict(self.user_generation_counts),
+                "img2vid_counts": dict(self.user_img2vid_counts),
                 "last_reset": self.last_reset_time,
                 "stats": self._serialize_generation_stats(),
             }
@@ -320,6 +337,7 @@ class ComfyUIBot(commands.Bot):
         current_time = time.time()
         if current_time - self.last_reset_time >= 86400:
             self.user_generation_counts.clear()
+            self.user_img2vid_counts.clear()
             self.last_reset_time = current_time
             self._save_generation_counts()
             logger.info("Daily generation counters reset")
@@ -362,6 +380,40 @@ class ComfyUIBot(commands.Bot):
 
     async def _on_queue_updated(self) -> None:
         await self._refresh_queue_views()
+
+    @staticmethod
+    def _is_img2vid_request(workflow_type: str, workflow: Optional[str]) -> bool:
+        return workflow_type == "img2img" and str(workflow or "").strip().upper() == ComfyUIBot.IMG2VID_WORKFLOW_NAME
+
+    async def _get_img2vid_daily_limit(self, interaction: discord.Interaction) -> Optional[int]:
+        member = await self._get_access_member(interaction)
+        if not member:
+            return None
+
+        role_ids = {role.id for role in getattr(member, "roles", [])}
+        matched_limits = [
+            limit for role_id, limit in self.IMG2VID_DAILY_LIMITS.items() if role_id in role_ids
+        ]
+        if not matched_limits:
+            return None
+        return max(matched_limits)
+
+    async def _send_img2vid_limit_reached_message(
+        self,
+        interaction: discord.Interaction,
+        used: int,
+        limit: int,
+    ) -> None:
+        reset_hint = self._format_time_remaining()
+        embed = ui_embeds.build_notice_embed(
+            title="🎬 IMG2VID limit reached",
+            description=(
+                f"Today used: **{used}/{limit}**.\n"
+                f"Limit resets in: **{reset_hint}**."
+            ),
+            color=ui_embeds.ERROR_COLOR,
+        )
+        await self._send_interaction_message(interaction, embed=embed, ephemeral=True)
 
     async def _refresh_queue_views(self) -> None:
         """Dynamically update queue positions for pending generations."""
@@ -714,6 +766,7 @@ class ComfyUIBot(commands.Bot):
         try:
             self.tree.add_command(rgen_command(self))
             self.tree.add_command(img2img_command(self))
+            self.tree.add_command(img2vid_command(self))
             self.tree.add_command(reforge_command(self))
             self.tree.add_command(workflows_command(self))
             self.tree.add_command(self._create_limits_command())
@@ -1260,6 +1313,22 @@ class ComfyUIBot(commands.Bot):
             await self._send_error_message(interaction, "ControlNet strength must be >= 0.")
             return
 
+        is_img2vid = self._is_img2vid_request(workflow_type, workflow)
+        if is_img2vid:
+            img2vid_limit = await self._get_img2vid_daily_limit(interaction)
+            if img2vid_limit is None:
+                await self._send_img2img_role_required_message(interaction)
+                return
+
+            current_img2vid_usage = int(self.user_img2vid_counts[user_id])
+            if current_img2vid_usage >= img2vid_limit:
+                await self._send_img2vid_limit_reached_message(
+                    interaction,
+                    used=current_img2vid_usage,
+                    limit=img2vid_limit,
+                )
+                return
+
         tier = await self._determine_user_tier(interaction)
         active_contexts = self._get_active_contexts(user_id)
         global_active = len(active_contexts) + self._get_remote_active_slots(user_id)
@@ -1349,6 +1418,11 @@ class ComfyUIBot(commands.Bot):
                     )
                 except Exception as exc:  # pragma: no cover - defensive
                     logger.debug("SYNC publish skipped: %s", exc)
+
+            if is_img2vid:
+                self.user_img2vid_counts[user_id] = int(self.user_img2vid_counts[user_id]) + 1
+                context.counted_img2vid_usage = True
+                self._save_generation_counts()
 
             self.active_generations[user_id].append(context)
             context.slot_counted = True
@@ -1934,6 +2008,11 @@ class ComfyUIBot(commands.Bot):
                 )
             except Exception as exc:  # pragma: no cover - defensive
                 logger.debug("SYNC publish rollback skipped: %s", exc)
+
+        if context.counted_img2vid_usage and not success and not context.cancel_event.is_set():
+            new_img2vid_value = max(0, self.user_img2vid_counts.get(context.user_id, 0) - 1)
+            self.user_img2vid_counts[context.user_id] = new_img2vid_value
+            self._save_generation_counts()
 
         if context.slot_counted:
             try:

@@ -209,6 +209,51 @@ def img2img_command(bot):
     return app_commands.autocomplete(lora_preset=lora_autocomplete)(img2img)
 
 
+def img2vid_command(bot):
+    """Create the img2vid command for image-to-video generation."""
+
+    @app_commands.command(
+        name="img2vid",
+        description="Generate a video from an attached source image"
+    )
+    @app_commands.describe(
+        image="Source image",
+        prompt="Description of the video you want to make",
+        prompt_preset="Select a prompt preset (optional)",
+        model_preset="Select a model preset (optional)",
+        lora_preset="Select a LoRA preset (optional)",
+        seed="Seed value (optional)",
+        settings="Additional settings (optional)"
+    )
+    async def img2vid(
+            interaction: discord.Interaction,
+            image: discord.Attachment,
+            prompt: str,
+            prompt_preset: Optional[str] = None,
+            model_preset: Optional[str] = None,
+            lora_preset: Optional[str] = None,
+            seed: Optional[int] = None,
+            settings: Optional[str] = None
+    ):
+        await bot.handle_generation(
+            interaction,
+            'img2img',
+            prompt,
+            workflow="IMG2VID",
+            settings=settings,
+            prompt_preset=prompt_preset,
+            model_preset=model_preset,
+            lora_preset=lora_preset,
+            seed=seed,
+            input_image=image,
+        )
+
+    prompt_autocomplete, model_autocomplete, lora_autocomplete = _preset_autocompletes(bot)
+    img2vid = app_commands.autocomplete(prompt_preset=prompt_autocomplete)(img2vid)
+    img2vid = app_commands.autocomplete(model_preset=model_autocomplete)(img2vid)
+    return app_commands.autocomplete(lora_preset=lora_autocomplete)(img2vid)
+
+
 def upscale_command(bot):
     """Create the upscale command"""
 
